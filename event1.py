@@ -100,79 +100,61 @@ class InteractiveImageView(QGraphicsView):
         self.h_line = None
 
     def update_image(self, image_data, show_mask=False):
+        # --- 1. 显示图片 (保持不变) ---
         self.np_img = image_data
-        
         if image_data.dtype == np.uint16:
-            # 简单压缩用于显示
             display_data = (image_data / 16).astype(np.uint8) 
         else:
             display_data = image_data.astype(np.uint8)
 
         h, w = display_data.shape
-        bytes_per_line = w
-        qimg = QImage(display_data.data, w, h, bytes_per_line, QImage.Format.Format_Grayscale8)
-        pix = QPixmap.fromImage(qimg)
-
-        if self.pixmap_item is None:
-            self.pixmap_item = self.scene.addPixmap(pix)
-            self.pixmap_item.setZValue(0)
-        else:
-            self.pixmap_item.setPixmap(pix)
+        qimg = QImage(display_data.data, w, h, w, QImage.Format.Format_Grayscale8)
         
-        # 定义圆的半径
-            radius = w - 10
+        if self.pixmap_item is None:
+            self.pixmap_item = self.scene.addPixmap(QPixmap.fromImage(qimg))
+        else:
+            self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
 
-        # 处理 Mask (十字线 + 圆)
+        # --- 2. 核心修复：先定义好所有的笔 (之前漏了 pen_circle) ---
+        pen_v = QPen(QColor("red"), 2, Qt.PenStyle.DashLine)
+        pen_h = QPen(QColor("blue"), 2, Qt.PenStyle.DashLine)
+        pen_circle = QPen(QColor("green"), 2, Qt.PenStyle.SolidLine) # 补上这个！
+
+        # --- 3. 处理 Mask ---
         if show_mask:
             cx, cy = w / 2, h / 2
-            
-            # 1. 定义垂直线的笔 (红色，宽度2，虚线)
-            pen_v = QPen(QColor("red"), 2)
-            pen_v.setStyle(Qt.PenStyle.DashLine)
+            r = min(w, h) / 4  # 半径设为图像的 1/4，这样肯定能看见
 
-            # 2. 定义水平线的笔 (蓝色，宽度2，虚线)
-            pen_h = QPen(QColor("blue"), 2)
-            pen_h.setStyle(Qt.PenStyle.DashLine)
-            
             if self.v_line is None:
-                # 创建线条时分别传入对应的笔
+                # --- 第一次创建 ---
                 self.v_line = self.scene.addLine(cx, 0, cx, h, pen_v)
                 self.h_line = self.scene.addLine(0, cy, w, cy, pen_h)
-                self.circle = self.scene.addEllipse(
-                    cx - radius,  # 左上角 x
-                    cy - radius,  # 左上角 y
-                    radius * 2,   # 宽 (直径)
-                    radius * 2,   # 高 (直径)
-                    pen_circle
-                )
+                self.circle = self.scene.addEllipse(cx-r, cy-r, r*2, r*2, pen_circle)
                 
-                # 设置层级，确保显示在图片上方
-                self.v_line.setZValue(1)
-                self.h_line.setZValue(1)
-                self.circle.setZValue(1)
+                # 设高一点，防止被图挡住
+                self.v_line.setZValue(10)
+                self.h_line.setZValue(10)
+                self.circle.setZValue(10)
             else:
-                # 更新线条位置
+                # --- 后续更新 ---
                 self.v_line.setLine(cx, 0, cx, h)
                 self.h_line.setLine(0, cy, w, cy)
-                self.circle.setRect(
-                    cx - radius, 
-                    cy - radius, 
-                    radius * 2, 
-                    radius * 2
-                )
+                self.circle.setRect(cx-r, cy-r, r*2, r*2)
 
-                # 【关键】更新笔的样式 (确保颜色和粗细实时生效)
+                # 重新设置笔和可见性
                 self.v_line.setPen(pen_v)
                 self.h_line.setPen(pen_h)
                 self.circle.setPen(pen_circle)
                 
                 self.v_line.setVisible(True)
                 self.h_line.setVisible(True)
-                self.circle.setVisible(True)        
+                self.circle.setVisible(True)
         else:
-            if self.v_line:
-                self.v_line.setVisible(False)
-                self.h_line.setVisible(False)
+            # --- 隐藏 ---
+            if self.v_line: self.v_line.setVisible(False)
+            if self.h_line: self.h_line.setVisible(False)
+            # 必须检查 circle 是否存在，防止报错
+            if hasattr(self, 'circle') and self.circle: 
                 self.circle.setVisible(False)
 
         self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
@@ -214,7 +196,9 @@ class LogicWindow(ModernUI):
         # --- 2. 内部变量 ---
         self.camera = None
         self.motion = None
-        self.images = []
+        self.dp = []
+        self.pos_x = []
+        self.pos_y = []
         
         # 实时流定时器
         self.timer = QTimer()
@@ -853,11 +837,6 @@ class LogicWindow(ModernUI):
         self.scan_timer = QTimer()
         self.scan_timer.timeout.connect(self._scan_step)
         self.scan_timer.start(200) # 根据需要在 100-500ms 之间调整
-        # 获取波长
-        try:
-            wl = float(self.wavelength_spin.value())
-        except: 
-            wl = 633.0
 
     def _scan_step(self):      
         # --- 正常步进 ---
@@ -872,8 +851,8 @@ class LogicWindow(ModernUI):
         frame_name = f"scan_{self.scan_idx:04d}"
         img_data, cur_x, cur_y = self.save_current_frame(base_name=frame_name)
 
-        pos_x[self.scan_idx] = cur_x
-        pos_y[self.scan_idx] = cur_y
+        self.pos_x[self.scan_idx] = cur_x
+        self.pos_y[self.scan_idx] = cur_y
         
         if img_data is not None:
             # 3. 处理暗场
@@ -885,7 +864,7 @@ class LogicWindow(ModernUI):
             else:
                 final_data = img_data
 
-            dp[self.scan_idx] = final_data
+            self.dp[self.scan_idx] = final_data
         
         self.scan_idx += 1
 
@@ -912,9 +891,9 @@ class LogicWindow(ModernUI):
         
         try:
                 # --- 将 Data 写入 H5 ---
-            dp_arr = np.array(dp)       
-            pos_x_arr = np.array(pos_x)
-            pos_y_arr = np.array(pos_y)
+            dp_arr = np.array(self.dp)       
+            pos_x_arr = np.array(self.pos_x)
+            pos_y_arr = np.array(self.pos_y)
 
             with h5py.File(h5_path, 'w') as f:
                 exp_data = f.create_group("scan_data")
@@ -935,7 +914,7 @@ class LogicWindow(ModernUI):
                 # 3. 写入波长 (float 直接写没问题，但为了统一也可以转 numpy)
                 exp_data.create_group("wavelength").create_dataset(
                     "incident_wavelength", 
-                    data=wl 
+                    data=np.array([self.wavelength_spin.value()])
                 )
                 
                 # 4. 其他属性
