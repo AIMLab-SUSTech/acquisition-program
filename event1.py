@@ -100,8 +100,12 @@ class InteractiveImageView(QGraphicsView):
         self.h_line = None
 
     def update_image(self, image_data, show_mask=False):
-        # --- 1. 显示图片 (保持不变) ---
+        # ===========================
+        # 1. 显示底图 (保持不变)
+        # ===========================
         self.np_img = image_data
+        
+        # 转换数据类型
         if image_data.dtype == np.uint16:
             display_data = (image_data / 16).astype(np.uint8) 
         else:
@@ -109,54 +113,56 @@ class InteractiveImageView(QGraphicsView):
 
         h, w = display_data.shape
         qimg = QImage(display_data.data, w, h, w, QImage.Format.Format_Grayscale8)
-        
+        pix = QPixmap.fromImage(qimg)
+
+        # 更新图片对象
         if self.pixmap_item is None:
-            self.pixmap_item = self.scene.addPixmap(QPixmap.fromImage(qimg))
+            self.pixmap_item = self.scene.addPixmap(pix)
+            self.pixmap_item.setZValue(0) # 图片永远在最底层
         else:
-            self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
+            self.pixmap_item.setPixmap(pix)
 
-        # --- 2. 核心修复：先定义好所有的笔 (之前漏了 pen_circle) ---
-        pen_v = QPen(QColor("red"), 2, Qt.PenStyle.DashLine)
-        pen_h = QPen(QColor("blue"), 2, Qt.PenStyle.DashLine)
-        pen_circle = QPen(QColor("green"), 2, Qt.PenStyle.SolidLine) # 补上这个！
+        # ===========================
+        # 2. 核心修复：Mask 绘制逻辑
+        #    策略：如果有旧的，先删掉；如果需要显示，再画新的。
+        #    这能彻底解决“点击没反应”的 Bug。
+        # ===========================
+        
+        # --- 第一步：清理战场 (只要有旧线条，统统删掉) ---
+        # 使用 getattr 防止第一次运行时变量未定义报错
+        if getattr(self, 'v_line', None): 
+            self.scene.removeItem(self.v_line)
+            self.v_line = None
+            
+        if getattr(self, 'h_line', None): 
+            self.scene.removeItem(self.h_line)
+            self.h_line = None
+            
+        if getattr(self, 'circle', None): 
+            self.scene.removeItem(self.circle)
+            self.circle = None
 
-        # --- 3. 处理 Mask ---
+        # --- 第二步：如果勾选了显示，则重新绘制 ---
         if show_mask:
             cx, cy = w / 2, h / 2
-            r = min(w, h) / 2 - 10  # 半径设为图像的 1/4，这样肯定能看见
+            r = min(w, h) / 4  # 半径设为图像的 1/4
 
-            if self.v_line is None:
-                # --- 第一次创建 ---
-                self.v_line = self.scene.addLine(cx, 0, cx, h, pen_v)
-                self.h_line = self.scene.addLine(0, cy, w, cy, pen_h)
-                self.circle = self.scene.addEllipse(cx-r, cy-r, r*2, r*2, pen_circle)
-                
-                # 设高一点，防止被图挡住
-                self.v_line.setZValue(10)
-                self.h_line.setZValue(10)
-                self.circle.setZValue(10)
-            else:
-                # --- 后续更新 ---
-                self.v_line.setLine(cx, 0, cx, h)
-                self.h_line.setLine(0, cy, w, cy)
-                self.circle.setRect(cx-r, cy-r, r*2, r*2)
+            # 定义笔 (颜色, 粗细, 样式)
+            pen_v = QPen(QColor("red"), 2, Qt.PenStyle.DashLine)
+            pen_h = QPen(QColor("blue"), 2, Qt.PenStyle.DashLine)
+            pen_c = QPen(QColor("green"), 2, Qt.PenStyle.SolidLine)
 
-                # 重新设置笔和可见性
-                self.v_line.setPen(pen_v)
-                self.h_line.setPen(pen_h)
-                self.circle.setPen(pen_circle)
-                
-                self.v_line.setVisible(True)
-                self.h_line.setVisible(True)
-                self.circle.setVisible(True)
-        else:
-            # --- 隐藏 ---
-            if self.v_line: self.v_line.setVisible(False)
-            if self.h_line: self.h_line.setVisible(False)
-            # 必须检查 circle 是否存在，防止报错
-            if hasattr(self, 'circle') and self.circle: 
-                self.circle.setVisible(False)
+            # 重新添加到场景中
+            self.v_line = self.scene.addLine(cx, 0, cx, h, pen_v)
+            self.h_line = self.scene.addLine(0, cy, w, cy, pen_h)
+            self.circle = self.scene.addEllipse(cx-r, cy-r, r*2, r*2, pen_c)
 
+            # 设为顶层，确保不被图片遮挡
+            self.v_line.setZValue(10)
+            self.h_line.setZValue(10)
+            self.circle.setZValue(10)
+
+        # 自动适应视图大小
         self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
 
     def mouseMoveEvent(self, event):
