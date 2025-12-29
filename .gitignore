@@ -10,3 +10,4 @@ __pycache__/
 *.iws
 *.png
 *.dll
+data
