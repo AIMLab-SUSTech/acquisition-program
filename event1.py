@@ -123,7 +123,7 @@ class InteractiveImageView(QGraphicsView):
         # --- 3. 处理 Mask ---
         if show_mask:
             cx, cy = w / 2, h / 2
-            r = min(w, h) / 4  # 半径设为图像的 1/4，这样肯定能看见
+            r = min(w, h) / 2 - 10  # 半径设为图像的 1/4，这样肯定能看见
 
             if self.v_line is None:
                 # --- 第一次创建 ---
@@ -852,8 +852,8 @@ class LogicWindow(ModernUI):
         frame_name = f"scan_{self.scan_idx:04d}"
         img_data, cur_x, cur_y = self.save_current_frame(base_name=frame_name)
 
-        self.pos_x[self.scan_idx].append(cur_x)
-        self.pos_y[self.scan_idx].append(cur_y)
+        self.pos_x.append(cur_x)
+        self.pos_y.append(cur_y)
         
         if img_data is not None:
             # 3. 处理暗场
@@ -865,7 +865,7 @@ class LogicWindow(ModernUI):
             else:
                 final_data = img_data
 
-            self.dp[self.scan_idx] = final_data
+            self.dp.append(final_data)
         
         self.scan_idx += 1
 
