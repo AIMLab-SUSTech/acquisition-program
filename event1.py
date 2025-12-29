@@ -7,6 +7,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import traceback
 import h5py
+from dataclasses import dataclass
 
 # PyQt6 导入
 from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
@@ -15,6 +16,16 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
 from gui_generate import ModernUI
+
+
+# =========================================================
+#  保存格式
+# =========================================================
+@dataclass
+class PtyParams():
+    wavelength: float
+    dp: np.ndarray
+    pos: list[float]
 
 # =========================================================
 #  硬件加载线程
@@ -203,6 +214,7 @@ class LogicWindow(ModernUI):
         self.last_mouse_y = 0
         self.image_view.mouse_hover_signal.connect(self.on_mouse_moved)
         self.default_save_dir = "please change this to your own path"
+        self.dark_frame = None
         self.save_dir = self.default_save_dir
 
         # --- 3. 信号绑定 ---
@@ -690,8 +702,8 @@ class LogicWindow(ModernUI):
             # 尝试调用硬件的绝对移动接口
             # 假设驱动通过 move_to(position, axis) 实现
             # Axis 0 = X, Axis 1 = Y
-            self.motion.move_to(0.0, axis=0)
-            self.motion.move_to(0.0, axis=1)
+            self.motion.move_to(hw_x, axis=0)
+            self.motion.move_to(hw_y, axis=1)
             
             # 移动完成后，同步硬件位置显示
             self.sync_hardware_position()
@@ -703,8 +715,8 @@ class LogicWindow(ModernUI):
             try:
                 # 某些驱动可能是 set_position
                 if hasattr(self.motion, 'move_absolute'):
-                    self.motion.move_absolute(0.0, axis=0)
-                    self.motion.move_absolute(0.0, axis=1)
+                    self.motion.move_absolute(hw_x, axis=0)
+                    self.motion.move_absolute(hw_y, axis=1)
                     self.sync_hardware_position()
             except Exception as e:
                 self.log_error(f"回零失败: {e}")
@@ -810,44 +822,139 @@ class LogicWindow(ModernUI):
         return True
 
     def start_scan(self):
-        # 扫描前强制重新生成一次，确保参数是最新的
+        # 1. 检查目录
         if not self.confirm_directory():
             return
 
+        # 2. 路径检查
         self.preview_scan_path()
-        
         if not getattr(self, 'scanner', None): 
-            self.log_error("扫描器未初始化，请先点击'显示/更新扫描路径'")
+            self.log_error("扫描器未初始化")
             return
         
-        if not self.confirm_directory():
-            return
+        # 3. 初始化数据缓存 List，用于存放 PtyParams 对象
+        self.scan_data_buffer = [] 
         
-        self.log_info(f"开始采集 {len(self.scanner.x)} 点...")
+        # 4. 设置文件名
+        mode_text = self.combo_scan_mode.currentText() 
+        self.current_scan_h5_name = f"Scan_{mode_text}.h5"
+        
+        self.log_info(f"开始采集 {len(self.scanner.x)} 点... 数据将暂存内存")
+
+        # 5. 启动定时器
         self.scan_idx = 0
         self.scan_timer = QTimer()
         self.scan_timer.timeout.connect(self._scan_step)
-        self.scan_timer.start(500) 
-        
+        self.scan_timer.start(200) # 根据需要在 100-500ms 之间调整
+
+
     def _scan_step(self):
+        # --- 扫描结束检查 ---
         if self.scan_idx >= len(self.scanner.x):
             self.scan_timer.stop()
-            self.log_success("扫描完成")
+            self.log_success("扫描采集完成，正在写入 H5 文件...")
+            
+            # === 最后统一保存 H5 ===
+            self._write_scan_buffer_to_h5()
+            
+            # 回到起点
             final_x = self.scanner.final_pos[0]
             final_y = self.scanner.final_pos[1]
             self._move_logical_delta(-final_x, 0)
             self._move_logical_delta(-final_y, 1)
             return
             
+        # --- 正常步进 ---
         dx = self.scanner.x[self.scan_idx]
         dy = self.scanner.y[self.scan_idx]
         
+        # 1. 移动
         self._move_logical_delta(dx, 0)
         self._move_logical_delta(dy, 1)
         
-        # time.sleep(0.5)
-        self.save_current_frame(filename=f"scan_{self.scan_idx}.h5")
+        # 2. 保存 PNG (仅用于显示) 并获取原始数据
+        frame_name = f"scan_{self.scan_idx:04d}"
+        img_data, cur_x, cur_y = self.save_current_frame(base_name=frame_name)
+        
+        if img_data is not None:
+            # 3. 处理暗场
+            if self.dark_frame is not None:
+                img_float = img_data.astype(np.float32)
+                subtracted = img_float - self.dark_frame
+                subtracted[subtracted < 0] = 0
+                final_data = subtracted
+            else:
+                final_data = img_data
+
+            # 4. 获取波长
+            try:
+                wl = float(self.wavelength_spin.value())
+            except: 
+                wl = 633.0
+
+            # 5. 【关键】构建 PtyParams Dataclass 并存入列表
+            # 注意：pos 按照 [x, y] 格式存储
+            param = PtyParams(
+                wavelength=wl,
+                dp=final_data,
+                pos=[cur_x, cur_y]
+            )
+            self.scan_data_buffer.append(param)
+        
         self.scan_idx += 1
+
+    def _write_scan_buffer_to_h5(self):
+        """将内存中的 scan_data_buffer (PtyParams列表) 统一写入 H5"""
+        if not self.scan_data_buffer:
+            self.log_warning("没有数据需要保存")
+            return
+
+        h5_path = os.path.join(self.save_dir, self.current_scan_h5_name)
+        
+        try:
+            # 1. 使用列表推导式提取数据堆栈
+            # dp_stack shape: (N, H, W)
+            dp_stack = np.array([p.dp for p in self.scan_data_buffer])
+            
+            # pos_stack shape: (N, 2) -> 分离为 x 和 y
+            pos_list = [p.pos for p in self.scan_data_buffer] # list of [x,y]
+            pos_x = np.array([p[0] for p in pos_list])
+            pos_y = np.array([p[1] for p in pos_list])
+            
+            # 取第一个数据的波长作为全局波长
+            wl = self.scan_data_buffer[0].wavelength
+
+            # 2. 写入 H5
+            with h5py.File(h5_path, 'w') as f:
+                entry = f.create_group("entry")
+                
+                # 数据组
+                data_grp = entry.create_group("data")
+                data_grp.create_dataset("data", data=dp_stack, compression="gzip")
+                
+                # 位置组
+                pos_grp = entry.create_group("position")
+                pos_grp.create_dataset("x", data=pos_x)
+                pos_grp.create_dataset("y", data=pos_y)
+                
+                # 光束参数
+                entry.create_group("beam").create_dataset("incident_wavelength", data=wl)
+                
+                # 标记属性
+                if self.dark_frame is not None:
+                    data_grp.attrs['dark_subtracted'] = True
+                
+                f.attrs['total_frames'] = len(self.scan_data_buffer)
+                f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
+
+            self.log_success(f"H5文件写入成功: {self.current_scan_h5_name}")
+            
+            # 3. 清空缓存释放内存
+            self.scan_data_buffer = []
+
+        except Exception as e:
+            self.log_error(f"H5 统一保存失败: {e}")
+            traceback.print_exc()
 
     def set_exposure_time(self):
         if self.camera:
@@ -862,97 +969,116 @@ class LogicWindow(ModernUI):
             self.save_dir = path
 
     def on_manual_save(self):
-        """响应界面上的'保存'按钮点击"""
-        # 1. 检查目录
+        """响应'保存'按钮：保存PNG，并直接保存为单帧 H5"""
         if not self.confirm_directory():
             return
         
-        default_name = f"image_{time.strftime('%H%M%S')}.h5"
-        
+        default_name = f"image_{time.strftime('%H%M%S')}"
         filename, ok = QInputDialog.getText(
-            self,
-            "保存单帧数据",
-            "请输入文件名:",
-            text=default_name
+            self, "保存当前视图", "请输入文件名:", text=default_name
         )
         
         if ok and filename.strip():
             final_name = filename.strip()
-            # 强制加上 .h5 后缀，如果用户没写
-            if not final_name.endswith('.h5') and not final_name.endswith('.png'):
-                final_name += '.h5'
+            
+            # 1. 调用通用函数保存 PNG，并获取数据 (save_current_frame只负责PNG和返回数据)
+            img_data, cur_x, cur_y = self.save_current_frame(base_name=final_name)
+            
+            if img_data is None:
+                self.log_error("无法获取图像数据，保存中止")
+                return
+
+            # 2. 手动保存 H5 (此处直接写入，不经过 PtyParams 列表，因为只有一帧)
+            h5_path = os.path.join(self.save_dir, f"{final_name}.h5")
+            try:
+                # 获取波长
+                try:
+                    wl = float(self.wavelength_spin.value())
+                except: 
+                    wl = 633.0
+
+                with h5py.File(h5_path, 'w') as f:
+                    entry = f.create_group("entry")
+                    
+                    # Data
+                    data_grp = entry.create_group("data")
+                    # 增加一个维度 [1, H, W] 保持格式统一
+                    data_grp.create_dataset("data", data=img_data[None, ...], compression="gzip")
+                    
+                    # Position
+                    pos_grp = entry.create_group("position")
+                    pos_grp.create_dataset("x", data=[cur_x])
+                    pos_grp.create_dataset("y", data=[cur_y])
+                    
+                    # Beam
+                    entry.create_group("beam").create_dataset("incident_wavelength", data=wl)
+                    
+                    f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
                 
-            self.save_current_frame(filename=final_name)
+                self.log_success(f"H5文件已保存: {final_name}.h5")
+                
+            except Exception as e:
+                self.log_error(f"H5写入失败: {e}")
         else:
             self.log_info("保存已取消")
 
-    def save_current_frame(self, filename=None):
-        if self.camera:
+    def save_current_frame(self, base_name=None):
+        """
+        功能：
+        1. 获取并裁剪图像
+        2. 保存为 PNG (可视化用)
+        3. 返回 (image_data, cur_x, cur_y) 供 Dataclass 或 H5 写入使用
+        """
+        if not self.camera: 
+            return None, 0, 0
+
+        try:
+            # 1. 获取并裁剪图像
+            full_img = self.camera.read_newest_image()
+            if full_img is None: 
+                return None, 0, 0
+            
+            roi_img = self.crop_image(full_img)
+            if roi_img is None: 
+                return None, 0, 0
+            
+            # 获取当前坐标
             try:
-                # 1. 获取最新图像
-                full_img = self.camera.read_newest_image()
-                if full_img is None: return
+                cur_x = float(self.stage_widget.target_x.text())
+                cur_y = float(self.stage_widget.target_y.text())
+            except:
+                cur_x, cur_y = 0.0, 0.0
 
-                # 2. 【关键】经过 crop_image 处理，应用子图和偏移
-                roi_img = self.crop_image(full_img)
-                    
-                if roi_img is not None:
-                    # 准备路径
-                    if not filename:
-                        filename = f"temp.png"
-                    path = os.path.join(self.save_dir, filename)
-                    if not os.path.exists(self.save_dir): os.makedirs(self.save_dir)
+            # 2. 准备路径并保存 PNG
+            if not base_name:
+                base_name = f"capture_{int(time.time())}"
+            # 确保没有后缀
+            base_name = os.path.splitext(base_name)[0]
 
-                    # === 分支 A: 如果是 HDF5 文件 (保存数据+元数据) ===
-                    if filename.endswith(".h5") or filename.endswith(".hdf5"):
-                        # 1. 获取位移台绝对位置 (从界面显示的 Target/Current 读取)
-                        try:
-                            cur_x = float(self.stage_widget.target_x.text())
-                            cur_y = float(self.stage_widget.target_y.text())
-                        except:
-                            cur_x, cur_y = 0.0, 0.0
-
-                        # 2. 获取波长 (假设界面上有个 self.wavelength_spin 输入框，如果没有则用默认值)
-                        try:
-                            wavelength = float(self.wavelength_spin.value())
-                        except:
-                            wavelength = 633.0  # 默认波长 633 Å
-                        
-                        # 3. 写入 H5 文件
-                        with h5py.File(path, 'w') as f:
-                            # 创建数据组
-                            entry = f.create_group("entry")
-                            data_grp = entry.create_group("data")
-                            
-                            # 保存图像数据
-                            data_grp.create_dataset("data", data=roi_img, compression="gzip")
-                            
-                            # 保存元数据
-                            # (1) 波长
-                            beam = entry.create_group("beam")
-                            beam.create_dataset("incident_wavelength", data=wavelength)
-                            
-                            # (2) 绝对位置
-                            position = entry.create_group("position")
-                            position.create_dataset("x_position", data=cur_x)
-                            position.create_dataset("y_position", data=cur_y)
-                            
-                            # (3) 其他信息
-                            f.create_dataset("timestamp", data=time.strftime('%Y-%m-%d %H:%M:%S'))
-                        
-                        self.log_success(f"已保存 H5 数据: {filename} (Pos: {cur_x:.3f}, {cur_y:.3f})")
-
-                    # === 分支 B: 如果是普通图片 (PNG/JPG) ===
-                    else:
-                        # 此时只能保存图片，无法保存元数据
-                        img_pil = Image.fromarray(roi_img)
-                        img_pil.save(path)
-                        self.log_success(f"已保存图像: {filename}")
-                    
+            if not os.path.exists(self.save_dir): 
+                os.makedirs(self.save_dir)
+            
+            path_png = os.path.join(self.save_dir, f"{base_name}.png")
+            
+            # 显示用的简单压缩 (不影响返回的原始 roi_img)
+            if roi_img.dtype == np.uint16:
+                img_vis = (roi_img / 256).astype(np.uint8) # 16bit->8bit
+            else:
+                img_vis = roi_img.astype(np.uint8)
+            
+            try:
+                Image.fromarray(img_vis).save(path_png)
+                self.log_info(f"图片已保存: {base_name}.png")
             except Exception as e:
-                self.log_error(f"保存失败: {e}")
-                import traceback
-                traceback.print_exc()
+                self.log_warning(f"PNG保存失败: {e}")
+
+            # 3. 返回原始数据
+            return roi_img, cur_x, cur_y
+
+        except Exception as e:
+            self.log_error(f"保存帧异常: {e}")
+            traceback.print_exc()
+            return None, 0, 0
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
