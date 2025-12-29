@@ -56,6 +56,9 @@ class DeviceLoader(QThread):
                     from pi_camera import PICamera                        
                     device_instance = PICamera()
                     device_instance.start_acquisition()
+                elif self.device_name == "VSY":
+                    from new_vsy_camera import NewVSYCamera                     
+                    device_instance = NewVSYCamera()
 
             elif self.device_type == 'stage':
                 if self.device_name == "NewPort":
@@ -145,7 +148,7 @@ class InteractiveImageView(QGraphicsView):
         # --- 第二步：如果勾选了显示，则重新绘制 ---
         if show_mask:
             cx, cy = w / 2, h / 2
-            r = min(w, h) / 4  # 半径设为图像的 1/4
+            r = min(w, h) / 2 - 10  # 半径设为图像的 1/4
 
             # 定义笔 (颜色, 粗细, 样式)
             pen_v = QPen(QColor("red"), 2, Qt.PenStyle.DashLine)
@@ -205,7 +208,7 @@ class LogicWindow(ModernUI):
         self.is_init = False
         self.dp = []
         self.pos_x = []
-        self.pos_y = []
+        self.pos_y = [] 
         
         # 实时流定时器
         self.timer = QTimer()
@@ -471,6 +474,9 @@ class LogicWindow(ModernUI):
     def update_frame(self):
         if self.camera:
             try:
+                if type(self.camera.__name__) == "NewVSYCamera":
+                    device_instance.start_acquisition()
+
                 # 1. 获取并裁剪图像
                 img = self.camera.read_newest_image()
                 if img is None: return
@@ -522,7 +528,7 @@ class LogicWindow(ModernUI):
                     self.last_mouse_y = h // 2
             
             except Exception as e:
-                pass
+                self.log_error(f"更新图像时出错: {e}")
 
     def toggle_live(self):
         if not self.camera:
@@ -881,7 +887,7 @@ class LogicWindow(ModernUI):
             self.log_success("扫描采集完成，正在写入 H5 文件...")
             
             # === 最后统一保存 H5 ===
-            self._write_scan_to_h5()
+            self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
             
             # 回到起点
             final_x = self.scanner.final_pos[0]
@@ -890,17 +896,18 @@ class LogicWindow(ModernUI):
             self._move_logical_delta(-final_y, 1)
             return
     
-    def _write_scan_to_h5(self):
+    def _write_scan_to_h5(self,dp, pos_x, pos_y, h5_path=None):
         """
         将当前扫描数据写入 H5 文件。(dp, pos_x, pos_y, wl)
         """
-        h5_path = os.path.join(self.save_dir, self.current_scan_h5_name)
+        if not h5_path:
+            h5_path = os.path.join(self.save_dir, self.current_scan_h5_name)
         
-        try:
+        try:  
                 # --- 将 Data 写入 H5 ---
-            dp_arr = np.array(self.dp)       
-            pos_x_arr = np.array(self.pos_x)
-            pos_y_arr = np.array(self.pos_y)
+            dp_arr = np.array(dp)       
+            pos_x_arr = np.array(pos_x)
+            pos_y_arr = np.array(pos_y)
 
             with h5py.File(h5_path, 'w') as f:
                 exp_data = f.create_group("scan_data")
@@ -921,7 +928,7 @@ class LogicWindow(ModernUI):
                 # 3. 写入波长 (float 直接写没问题，但为了统一也可以转 numpy)
                 exp_data.create_group("wavelength").create_dataset(
                     "incident_wavelength", 
-                    data=np.array([self.wavelength_spin.value()])
+                    data=np.array([float(self.wavelength_spin.text())])
                 )
                 
                 # 4. 其他属性
@@ -964,38 +971,13 @@ class LogicWindow(ModernUI):
             if img_data is None:
                 self.log_error("无法获取图像数据，保存中止")
                 return
-
-            # 2. 手动保存 H5 (此处直接写入，不经过 PtyParams 列表，因为只有一帧)
-            h5_path = os.path.join(self.save_dir, f"{final_name}.h5")
             try:
-                # 获取波长
-                try:
-                    wl = float(self.wavelength_spin.value())
-                except: 
-                    wl = 633.0
-
-                with h5py.File(h5_path, 'w') as f:
-                    entry = f.create_group("entry")
-                    
-                    # Data
-                    data_grp = entry.create_group("data")
-                    # 增加一个维度 [1, H, W] 保持格式统一
-                    data_grp.create_dataset("data", data=img_data[None, ...], compression="gzip")
-                    
-                    # Position
-                    pos_grp = entry.create_group("position")
-                    pos_grp.create_dataset("x", data=[cur_x])
-                    pos_grp.create_dataset("y", data=[cur_y]) 
-                    
-                    # Beam
-                    entry.create_group("beam").create_dataset("incident_wavelength", data=wl)
-                    
-                    f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
-                
-                self.log_success(f"H5文件已保存: {final_name}.h5")
-                
+                # 2. 手动保存 H5 (此处直接写入，不经过 PtyParams 列表，因为只有一帧)
+                h5_path = os.path.join(self.save_dir, f"{final_name}.h5")
+                self._write_scan_to_h5(img_data, cur_x, cur_y,h5_path)
+                self.log_success(f"保存 H5文件已保存: {final_name}.h5")
             except Exception as e:
-                self.log_error(f"H5写入失败: {e}")
+                self.log_error(f"保存 H5写入失败: {e}")
         else:
             self.log_info("保存已取消")
 
