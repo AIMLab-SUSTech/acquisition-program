@@ -842,7 +842,8 @@ class LogicWindow(ModernUI):
         if self.dark_frame is None:
             confirm = QMessageBox.question(
                 self, 
-                "是否采集当前环境的暗场？\n",
+                "暗场检查",                 # <--- 这里是标题 (Title)
+                "是否采集当前环境的暗场？",   # <--- 这里是内容 (Text)
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
@@ -887,7 +888,7 @@ class LogicWindow(ModernUI):
             else:
                 final_data = img_data
 
-            self.dp.append(final_data)
+        self.dp.append(final_data)
         
         self.scan_idx += 1
 
