@@ -474,7 +474,7 @@ class LogicWindow(ModernUI):
     def update_frame(self):
         if self.camera:
             try:
-                if type(self.camera.__name__) == "NewVSYCamera":
+                if type(self.camera).__name__ == "NewVSYCamera":
                     device_instance.start_acquisition()
 
                 # 1. 获取并裁剪图像
@@ -909,32 +909,27 @@ class LogicWindow(ModernUI):
             pos_x_arr = np.array(pos_x)
             pos_y_arr = np.array(pos_y)
 
-            with h5py.File(h5_path, 'w') as f:
-                exp_data = f.create_group("scan_data")
-                
+            with h5py.File(h5_path, 'w') as f:            
                 # 1. 写入图像数据
-                data_grp = exp_data.create_group("data")
-                data_grp.create_dataset(
+                f.create_dataset(
                     "data", 
                     data=dp_arr,        # 使用转换后的 numpy 数组
                     compression="gzip"  # 只有 numpy 数组才能支持压缩
-                )
-                
+                )             
                 # 2. 写入坐标数据
-                pos_grp = exp_data.create_group("position")
-                pos_grp.create_dataset("x", data=pos_x_arr) # 使用转换后的 numpy 数组
-                pos_grp.create_dataset("y", data=pos_y_arr) # 使用转换后的 numpy 数组
+                f.create_dataset("x", data=pos_x_arr) # 使用转换后的 numpy 数组
+                f.create_dataset("y", data=pos_y_arr) # 使用转换后的 numpy 数组
                 
                 # 3. 写入波长 (float 直接写没问题，但为了统一也可以转 numpy)
-                exp_data.create_group("wavelength").create_dataset(
-                    "incident_wavelength", 
+                f.create_dataset(
+                    "wavelength", 
                     data=np.array([float(self.wavelength_spin.text())])
                 )
                 
                 # 4. 其他属性
                 # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
-                exp_data.attrs['total_frames'] = dp_arr.shape[0] 
-                exp_data.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                f.attrs['total_frames'] = dp_arr.shape[0] 
+                f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
 
         except Exception as e:
             self.log_error(f"H5 保存失败: {e}")
