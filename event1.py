@@ -196,6 +196,7 @@ class LogicWindow(ModernUI):
         # --- 2. 内部变量 ---
         self.camera = None
         self.motion = None
+        self.is_init = False
         self.dp = []
         self.pos_x = []
         self.pos_y = []
@@ -851,8 +852,8 @@ class LogicWindow(ModernUI):
         frame_name = f"scan_{self.scan_idx:04d}"
         img_data, cur_x, cur_y = self.save_current_frame(base_name=frame_name)
 
-        self.pos_x[self.scan_idx] = cur_x
-        self.pos_y[self.scan_idx] = cur_y
+        self.pos_x[self.scan_idx].append(cur_x)
+        self.pos_y[self.scan_idx].append(cur_y)
         
         if img_data is not None:
             # 3. 处理暗场
