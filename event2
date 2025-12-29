@@ -1,10 +1,12 @@
-import sys, os, time, traceback
+import sys, os, time, traceback, io
 import numpy as np
 import h5py
 from PIL import Image
+import matplotlib.pyplot as plt
 
 # PyQt6 导入
-from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
+from PyQt6.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, 
+                             QFileDialog, QMessageBox, QInputDialog, QWidget)
 from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
@@ -24,10 +26,14 @@ class DeviceLoader(QThread):
         try:
             dev = None
             # 硬件映射表：在这里配置新设备 {名字: (模块名, 类名)}
+            # 格式: "UI显示的名称": ("文件名", "类名")
             cam_map = {
-                "IDS": ("camera", "IDS"), "Ham": ("camera", "Ham"), 
-                "Lucid": ("lucid", "LucidCamera"), "PM": ("photometrics", "PyVCAM"),
-                "IDS_Peak": ("peak", "IDSPeakCamera"), "PI-mte3": ("pi_camera", "PICamera"),
+                "IDS": ("camera", "IDS"), 
+                "Ham": ("camera", "Ham"), 
+                "Lucid": ("lucid", "LucidCamera"), 
+                "PM": ("photometrics", "PyVCAM"),
+                "IDS_Peak": ("peak", "IDSPeakCamera"), 
+                "PI-mte3": ("pi_camera", "PICamera"),
                 "VSY": ("new_vsy_camera", "NewVSYCamera")
             }
             stage_map = {
@@ -37,18 +43,40 @@ class DeviceLoader(QThread):
             }
 
             if self.dt == 'camera' and self.dn in cam_map:
-                mod, cls = cam_map[self.dn]
-                module = __import__(mod, fromlist=[cls])
-                dev = getattr(module, cls)()
-                if hasattr(dev, 'start_acquisition'): dev.start_acquisition()
+                mod_name, cls_name = cam_map[self.dn]
+                module = __import__(mod_name, fromlist=[cls_name])
+                cls = getattr(module, cls_name) # 先获取类，不直接实例化
+
+                # 1. 根据不同相机类型进行实例化
+                if self.dn == "Lucid":
+                    # Lucid 需要特殊参数，单独实例化
+                    dev = cls(max_tries=1, wait_time=1)
+                else:
+                    # 其他相机通常是无参初始化
+                    dev = cls()
+
+                # 2. 初始化后的特定设置 (如 IDS 设置像素率)
+                if self.dn == "IDS":
+                    # 确保类中有这个方法再调用，或者直接调用
+                    if hasattr(dev, 'set_pixel_rate'):
+                        dev.set_pixel_rate(7e7)
+
+                # 3. 统一启动采集 (VSY 除外)
+                if hasattr(dev, 'start_acquisition') and self.dn != "VSY": 
+                    dev.start_acquisition()
                 
             elif self.dt == 'stage' and self.dn in stage_map:
-                mod, cls = stage_map[self.dn]
-                module = __import__(mod, fromlist=[cls])
-                dev = getattr(module, cls)()
+                mod_name, cls_name = stage_map[self.dn]
+                module = __import__(mod_name, fromlist=[cls_name])
                 # 针对不同控制器的初始化参数
-                if self.dn == "NewPort": dev.init_groups(['Group3', 'Group4'])
-                elif self.dn == "Nators": dev.open_system()
+                if self.dn == "NewPort": 
+                    dev = getattr(module, cls_name)(IP='192.168.0.254')
+                    dev.init_groups(['Group3', 'Group4'])
+                elif self.dn == "Nators": 
+                    dev = getattr(module, cls_name)(ip_address="192.168.0.254")
+                    dev.open_system()
+                else:
+                    dev = getattr(module, cls_name)()
 
             if dev: self.finished_signal.emit(True, dev)
             else: self.finished_signal.emit(False, f"未定义驱动: {self.dn}")
@@ -57,7 +85,7 @@ class DeviceLoader(QThread):
             self.finished_signal.emit(False, str(e))
 
 # =========================================================
-#  2. 高性能图像显示控件 (优化绘图逻辑)
+#  2. 高性能图像显示控件 (优化绘图逻辑，老电脑友好)
 # =========================================================
 class FastImageView(QGraphicsView):
     mouse_hover_signal = pyqtSignal(int, int, object)
@@ -77,9 +105,10 @@ class FastImageView(QGraphicsView):
         self.h_line = self.scene.addLine(0,0,0,0, QPen(QColor("blue"), 1, Qt.PenStyle.DashLine))
         self.circle = self.scene.addEllipse(0,0,0,0, QPen(QColor("green"), 2))
         
+        # 默认隐藏所有 Mask 元素
         for item in [self.v_line, self.h_line, self.circle]:
             item.setZValue(10)     # 永远在顶层
-            item.setVisible(False) # 默认隐藏
+            item.setVisible(False) 
 
     def update_image(self, img_data, show_mask=False):
         self.np_img = img_data
@@ -87,7 +116,7 @@ class FastImageView(QGraphicsView):
         
         # 1. 快速转换 (避免不必要的拷贝)
         if img_data.dtype == np.uint16:
-            # 简单降位，速度最快
+            # 简单降位显示，速度最快
             disp_data = (img_data >> 4).astype(np.uint8) if img_data.max() > 4095 else img_data.astype(np.uint8)
         else:
             disp_data = img_data.astype(np.uint8)
@@ -131,8 +160,9 @@ class LogicWindow(ModernUI):
         
         # 替换 UI 里的 Label 为图像控件
         self.image_view = FastImageView()
+        # 清除旧 layout 并添加新控件
         if self.image_area.layout(): 
-            QWidget().setLayout(self.image_area.layout()) # 清除旧 layout
+            QWidget().setLayout(self.image_area.layout()) 
         layout = QVBoxLayout(self.image_area)
         layout.setContentsMargins(0,0,0,0)
         layout.addWidget(self.image_view)
@@ -140,9 +170,14 @@ class LogicWindow(ModernUI):
         # 核心变量
         self.camera = None
         self.motion = None
-        self.scan_buffer = {'dp': [], 'x': [], 'y': []}
-        self.save_dir = "D:/Data" # 默认路径简化
-        self.save_dir_edit.setText(self.save_dir)
+        
+        # 数据缓存 (使用 self 挂载，防止 scan_step 找不到)
+        self.dp = [] 
+        self.pos_x = []
+        self.pos_y = []
+        
+        self.save_dir = "D:/Data" # 默认建议路径
+        self.save_dir_edit.setText("please change this to your own path")
         self.dark_frame = None
 
         # 定时器
@@ -160,9 +195,9 @@ class LogicWindow(ModernUI):
         # 操作
         self.btn_live.clicked.connect(self.toggle_live)
         self.btn_cap.clicked.connect(self.start_scan)
-        self.btn_save.clicked.connect(self.manual_save)
+        self.btn_save.clicked.connect(self.on_manual_save)
         self.btn_browse.clicked.connect(self.select_folder)
-        self.btn_show_path.clicked.connect(self.preview_path)
+        self.btn_show_path.clicked.connect(self.preview_scan_path)
         self.btn_center.clicked.connect(self.auto_center)
         self.exposure_spin.valueChanged.connect(self.update_exposure)
 
@@ -177,23 +212,28 @@ class LogicWindow(ModernUI):
 
         self.image_view.mouse_hover_signal.connect(self.on_mouse_hover)
 
-    # --- 日志系统 (HTML 格式) ---
-    def log(self, msg, color="#2196F3"):
+    # --- 日志系统 ---
+    def log_info(self, msg): self.log(msg, "#2196F3", "ℹ️")
+    def log_success(self, msg): self.log(msg, "#4CAF50", "✅")
+    def log_warning(self, msg): self.log(msg, "#FF9800", "⚠️")
+    def log_error(self, msg): self.log(msg, "#F44336", "❌")
+
+    def log(self, msg, color, icon):
         t = time.strftime("%H:%M:%S")
-        self.txt_log.append(f"<span style='color:{color}'><b>[{t}]</b> {msg}</span>")
+        self.txt_log.append(f"<span style='color:{color}'><b>[{t}]</b> {icon} {msg}</span>")
         self.txt_log.verticalScrollBar().setValue(self.txt_log.verticalScrollBar().maximum())
 
     def handle_exception(self, etype, evalue, tb):
         err = "".join(traceback.format_exception(etype, evalue, tb))
         print(err)
-        self.log(f"系统错误: {evalue}", "#F44336")
+        self.log_error(f"系统错误: {evalue}")
 
     # --- 硬件加载通用逻辑 ---
     def load_device(self, dtype):
         name = self.combo_camera.currentText() if dtype == 'camera' else self.combo_stage.currentText()
         btn = self.btn_open_cam if dtype == 'camera' else self.btn_connect_stage
         
-        self.log(f"正在加载 {dtype}: {name}...")
+        self.log_info(f"正在加载 {dtype}: {name}...")
         btn.setEnabled(False)
         
         self.loader = DeviceLoader(dtype, name)
@@ -203,27 +243,34 @@ class LogicWindow(ModernUI):
     def on_loaded(self, dtype, success, result, btn):
         btn.setEnabled(True)
         if not success:
-            self.log(f"加载失败: {result}", "red")
+            self.log_error(f"加载失败: {result}")
             return
             
         if dtype == 'camera':
             self.camera = result
             self.update_exposure()
             # 获取位深用于计算饱和
-            self.bit_depth = getattr(result, 'bit_depth', 16)
+            try:
+                self.bit_depth = int(getattr(result, 'bit_depth', 16))
+            except: self.bit_depth = 16
             self.sat_val = (1 << self.bit_depth) - 1
             btn.setStyleSheet("background:#4CAF50;color:white;")
-            self.log(f"相机就绪 ({self.bit_depth}-bit)", "green")
+            self.log_success(f"相机就绪 ({self.bit_depth}-bit)")
         else:
             self.motion = result
             self.sync_pos()
             btn.setText("已连接")
-            self.log("位移台就绪", "green")
+            self.log_success("位移台就绪")
 
     # --- 图像刷新 (核心循环) ---
     def update_frame(self):
         if not self.camera: return
         try:
+            # === VSY 相机特殊处理 ===
+            # 必须在每次采集前调用 start
+            if self.camera.__class__.__name__ == "NewVSYCamera":
+                self.camera.start_acquisition()
+
             # 1. 采集 & 裁剪
             img = self.camera.read_newest_image()
             if img is None: return
@@ -246,19 +293,23 @@ class LogicWindow(ModernUI):
                 self.image_view.update_image(roi, self.chk_mask.isChecked())
                 
         except Exception as e:
-            pass # 实时流报错不弹窗，避免卡死
+            # 实时流偶尔报错不弹窗，避免卡死
+            print(f"Frame Error: {e}")
 
     def crop_image(self, img):
-        # 极简裁剪逻辑，含越界保护
         h, w = img.shape
         try:
             tw, th = int(self.roi_w.text()), int(self.roi_h.text())
             ox, oy = int(self.off_x.text()), int(self.off_y.text())
         except: tw, th, ox, oy = 1024, 1024, 0, 0
         
+        # 简单的中心裁剪逻辑
         cx, cy = w//2 + ox, h//2 + oy
-        x1, y1 = max(0, cx - tw//2), max(0, cy - th//2)
-        x2, y2 = min(w, x1 + tw), min(h, y1 + th)
+        x1 = max(0, cx - tw//2)
+        y1 = max(0, cy - th//2)
+        x2 = min(w, x1 + tw)
+        y2 = min(h, y1 + th)
+        
         return img[int(y1):int(y2), int(x1):int(x2)]
 
     # --- 功能函数 ---
@@ -269,12 +320,15 @@ class LogicWindow(ModernUI):
             self.btn_live.setText("👁 启动")
             self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
         else:
-            self.timer.start(50) # 20fps
+            self.timer.start(50) # 20fps，老电脑跑得动
             self.btn_live.setText("⬛ 停止")
             self.btn_live.setStyleSheet("background:#7f8c8d;color:white;font-weight:bold;")
 
     def update_exposure(self):
-        if self.camera: self.camera.set_ex_time(self.exposure_spin.value()/1000.0)
+        if self.camera: 
+            try:
+                self.camera.set_ex_time(self.exposure_spin.value()/1000.0)
+            except: pass
 
     def on_mouse_hover(self, x, y, val):
         if val is not None:
@@ -282,13 +336,17 @@ class LogicWindow(ModernUI):
 
     def auto_center(self):
         if not self.camera: return
+        
+        # VSY 特殊处理
+        if self.camera.__class__.__name__ == "NewVSYCamera":
+            self.camera.start_acquisition()
+            
         img = self.camera.read_newest_image()
         if img is None: return
         
-        # 简单质心算法
         mask = img > (np.mean(img) + 3*np.std(img))
         if np.sum(mask) == 0: 
-            self.log("图像太暗，无法对准", "orange")
+            self.log_warning("图像太暗，无法对准")
             return
             
         y_idx, x_idx = np.indices(img.shape)
@@ -299,62 +357,55 @@ class LogicWindow(ModernUI):
         h, w = img.shape
         self.off_x.setText(str(int(cx - w/2)))
         self.off_y.setText(str(int(cy - h/2)))
-        self.log(f"自动对准完成: Offset ({self.off_x.text()}, {self.off_y.text()})", "green")
-        self.update_frame()
+        self.log_success(f"自动对准完成: Offset ({self.off_x.text()}, {self.off_y.text()})")
+        self.update_frame() # 刷新一次看效果
 
-    # --- 位移台控制 (合并逻辑) ---
+    # --- 位移台控制 ---
     def move_stage(self, logical_axis, val, rel=True):
         """
-        logical_axis: 0=Up/Down(Y), 1=Left/Right(X)  (注意这里为了摇杆方便，定义略有不同)
-        val: 步进方向 或者 绝对坐标值
-        rel: 是否相对移动
+        logical_axis: 0=Up/Down(Y), 1=Left/Right(X)
+        val: 方向 或 绝对值
         """
         if not self.motion: return
         
-        # 1. 读取配置
         w = self.stage_widget
         swap = w.check_swap.isChecked()
-        inv = [w.check_inv_y.isChecked(), w.check_inv_x.isChecked()] # [Y, X]
+        inv = [w.check_inv_y.isChecked(), w.check_inv_x.isChecked()] 
         
-        # 2. 计算物理移动量
         try:
             if rel:
-                # 相对移动 (摇杆)
                 step = w.step_spin.value()
-                delta = [0, 0]
-                # logical_axis 0->Y, 1->X
-                idx = 0 if logical_axis == 0 else 1
                 dist = val * step
+                # 逻辑轴转物理轴
+                idx = 0 if logical_axis == 0 else 1
                 if inv[idx]: dist *= -1
-                
-                # 物理轴映射
                 phys_axis = 1 if (idx==0 and not swap) or (idx==1 and swap) else 0
                 self.motion.move_by(dist, axis=phys_axis)
             else:
                 # 绝对移动
                 tx, ty = float(w.target_x.text()), float(w.target_y.text())
-                # 简单处理：如果有 move_to 最好，没有则算差值
+                ax_x = 1 if swap else 0
+                ax_y = 0 if swap else 1
                 if hasattr(self.motion, 'move_to'):
-                    ax_x = 1 if swap else 0
-                    ax_y = 0 if swap else 1
                     self.motion.move_to(tx, axis=ax_x)
                     self.motion.move_to(ty, axis=ax_y)
-                else:
-                    self.log("驱动不支持绝对移动", "orange")
             
             self.sync_pos()
             
         except Exception as e:
-            self.log(f"移动失败: {e}", "red")
+            self.log_error(f"移动失败: {e}")
 
     def sync_pos(self):
         if not self.motion: return
         try:
-            # 兼容不同接口
             if hasattr(self.motion, 'get_position'):
                 x, y = self.motion.get_position(0), self.motion.get_position(1)
+            elif hasattr(self.motion, 'xps'): # NewPort 特殊
+                 # 假设 Group3=X, Group4=Y
+                 x = self.motion.xps.get_stage_position('Group3.Pos')
+                 y = self.motion.xps.get_stage_position('Group4.Pos')
             else:
-                x, y = 0, 0 # fallback
+                x, y = 0, 0
                 
             self.stage_widget.lbl_x.setText(f"X: {x:.3f}")
             self.stage_widget.lbl_y.setText(f"Y: {y:.3f}")
@@ -363,18 +414,30 @@ class LogicWindow(ModernUI):
 
     def zero_stage(self):
         if self.motion and hasattr(self.motion, 'move_to'):
-            self.motion.move_to(0,0); self.motion.move_to(0,1)
-            self.sync_pos()
-            self.log("已回零", "blue")
+            try:
+                self.motion.move_to(0,0)
+                self.motion.move_to(0,1)
+                self.sync_pos()
+                self.log_info("已回零")
+            except: pass
 
     # --- 扫描与保存 ---
+    def confirm_directory(self):
+        d = self.save_dir_edit.text()
+        if "please change" in d or not os.path.exists(d):
+            if not self.select_folder(): return False
+        self.save_dir = self.save_dir_edit.text()
+        return True
+
     def select_folder(self):
         d = QFileDialog.getExistingDirectory(self, "选择保存路径")
         if d: 
             self.save_dir = d
             self.save_dir_edit.setText(d)
+            return True
+        return False
 
-    def preview_path(self):
+    def preview_scan_path(self):
         try:
             from Scanner import Scanner
             mode_map = {"矩形": "rectangle", "圆形": "round", "螺旋": "fermat"}
@@ -387,7 +450,6 @@ class LogicWindow(ModernUI):
             self.scan_points.setText(str(len(self.scanner.x)))
             
             # 绘图预览
-            import matplotlib.pyplot as plt
             import io
             fig, ax = plt.subplots(figsize=(4,3), dpi=80)
             ax.plot(self.scanner.abs_x, self.scanner.abs_y, 'b.-', lw=0.5, ms=2)
@@ -399,76 +461,118 @@ class LogicWindow(ModernUI):
             self.lbl_scan_preview.setPixmap(QPixmap.fromImage(QImage.fromData(buf.getvalue())))
             
         except Exception as e:
-            self.log(f"预览失败: {e}", "red")
+            self.log_error(f"预览失败: {e}")
 
     def start_scan(self):
-        if not getattr(self, 'scanner', None):
-            self.log("请先生成扫描路径", "orange"); return
+        if not self.confirm_directory(): return
+        self.preview_scan_path() # 确保 scanner 最新
+        if not getattr(self, 'scanner', None): return
         
-        # 初始化
-        self.scan_buffer = {'dp': [], 'x': [], 'y': []}
+        # 询问暗场
+        if self.dark_frame is None:
+            ans = QMessageBox.question(self, "暗场", "是否采集暗场?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if ans == QMessageBox.StandardButton.Yes:
+                if self.camera.__class__.__name__ == "NewVSYCamera": self.camera.start_acquisition()
+                self.dark_frame = self.camera.read_newest_image()
+                self.log_success("暗场已采集")
+
+        # 初始化数据缓存
+        self.dp = []
+        self.pos_x = []
+        self.pos_y = []
+        
+        self.current_scan_h5_name = f"scandata.h5"
         self.scan_idx = 0
         self.scan_timer = QTimer()
-        self.scan_timer.timeout.connect(self.scan_step)
-        self.scan_timer.start(200) # 采集间隔
-        self.log(f"开始采集 {len(self.scanner.x)} 点...", "blue")
+        self.scan_timer.timeout.connect(self._scan_step)
+        self.scan_timer.start(200) 
+        self.log_info(f"开始采集 {len(self.scanner.x)} 点...")
 
-    def scan_step(self):
+    def _scan_step(self):
         # 1. 移动
         dx, dy = self.scanner.x[self.scan_idx], self.scanner.y[self.scan_idx]
-        self.move_stage(1, dx/self.stage_widget.step_spin.value(), rel=True) # 复用逻辑需小心，这里简化处理直接调用驱动更好
-        if self.motion:
-            # 直接调用物理移动更稳
-            self.motion.move_by(dx, axis=0); self.motion.move_by(dy, axis=1)
+        self.move_stage(1, dx/self.stage_widget.step_spin.value(), rel=True) # 简化调用
+        
+        # 2. 采集
+        # VSY 特殊处理
+        if self.camera and self.camera.__class__.__name__ == "NewVSYCamera":
+            self.camera.start_acquisition()
+            
+        # 复用 save_current_frame 获取数据和 PNG
+        frame_name = f"scan_{self.scan_idx:04d}"
+        img_data, cx, cy = self.save_current_frame(base_name=frame_name)
+        
+        # 3. 存入内存列表
+        if img_data is not None:
+            # 扣除暗场
+            if self.dark_frame is not None:
+                img_f = img_data.astype(np.float32) - self.dark_frame
+                img_f[img_f < 0] = 0
+                self.dp.append(img_f)
+            else:
+                self.dp.append(img_data)
+            
+            self.pos_x.append(cx)
+            self.pos_y.append(cy)
 
-        # 2. 存图
-        img = self.camera.read_newest_image()
-        roi = self.crop_image(img) if img is not None else np.zeros((100,100))
-        
-        # 存入 Buffer
-        self.scan_buffer['dp'].append(roi)
-        self.scan_buffer['x'].append(float(self.stage_widget.target_x.text() or 0))
-        self.scan_buffer['y'].append(float(self.stage_widget.target_y.text() or 0))
-        
-        # 3. 进度检查
         self.scan_idx += 1
+        
+        # 4. 结束检查
         if self.scan_idx >= len(self.scanner.x):
             self.scan_timer.stop()
-            self.save_h5_file()
-
-    def save_h5_file(self, filename=None):
-        if not filename:
-            name = f"Scan_{self.combo_scan_mode.currentText()}_{time.strftime('%H%M%S')}.h5"
-            filename = os.path.join(self.save_dir, name)
+            self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
             
+            # 回零
+            fx, fy = self.scanner.final_pos
+            self.move_stage(1, -fx/self.stage_widget.step_spin.value(), rel=True)
+            self.move_stage(0, -fy/self.stage_widget.step_spin.value(), rel=True)
+
+    def _write_scan_to_h5(self, dp, px, py, path=None):
+        if not path: path = os.path.join(self.save_dir, self.current_scan_h5_name)
         try:
-            with h5py.File(filename, 'w') as f:
-                grp = f.create_group("scan_data")
-                # 关键：转 Numpy 再存，支持压缩
-                grp.create_dataset("data", data=np.array(self.scan_buffer['dp']), compression="gzip")
-                grp.create_group("position").create_dataset("x", data=np.array(self.scan_buffer['x']))
-                grp.create_group("position").create_dataset("y", data=np.array(self.scan_buffer['y']))
-                grp.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
-                
-            self.log(f"保存成功: {os.path.basename(filename)}", "green")
-            # 清空内存
-            self.scan_buffer = {'dp': [], 'x': [], 'y': []}
-            
+            with h5py.File(path, 'w') as f:
+                f.create_dataset("data", data=np.array(dp), compression="gzip")
+                f.create_dataset("x", data=np.array(px))
+                f.create_dataset("y", data=np.array(py))
+                try: wl = float(self.wavelength_spin.text())
+                except: wl = 632.8
+                f.create_dataset("wavelength", data=np.array([wl]))
+                f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            self.log_success(f"数据保存成功: {os.path.basename(path)}")
+            # 清空缓存
+            self.dp, self.pos_x, self.pos_y = [], [], []
         except Exception as e:
-            self.log(f"保存失败: {e}", "red")
+            self.log_error(f"H5保存失败: {e}")
 
-    def manual_save(self):
+    def save_current_frame(self, base_name=None):
+        if not self.camera: return None, 0, 0
+        img = self.camera.read_newest_image()
+        if img is None: return None, 0, 0
+        roi = self.crop_image(img)
+        
+        try: cx, cy = float(self.stage_widget.target_x.text()), float(self.stage_widget.target_y.text())
+        except: cx, cy = 0, 0
+        
+        # 存图
+        if not base_name: base_name = f"cap_{time.time()}"
+        save_path = os.path.join(self.save_dir, base_name+".png")
+        if not os.path.exists(self.save_dir): os.makedirs(self.save_dir)
+        
+        try:
+            disp = (roi/16).astype(np.uint8) if roi.dtype==np.uint16 else roi.astype(np.uint8)
+            Image.fromarray(disp).save(save_path)
+        except: pass
+        
+        return roi, cx, cy
+
+    def on_manual_save(self):
         name, ok = QInputDialog.getText(self, "保存", "文件名:", text=f"img_{time.strftime('%H%M%S')}")
         if ok and name:
-            # 存 PNG
-            img = self.camera.read_newest_image()
+            img, x, y = self.save_current_frame(name)
             if img is not None:
-                roi = self.crop_image(img)
-                Image.fromarray((roi/16).astype(np.uint8)).save(os.path.join(self.save_dir, name+".png"))
-                
-                # 存 H5 (单帧)
-                self.scan_buffer = {'dp': [roi], 'x': [0], 'y': [0]}
-                self.save_h5_file(os.path.join(self.save_dir, name+".h5"))
+                h5_path = os.path.join(self.save_dir, name+".h5")
+                # 手动保存单帧，直接构造列表传给通用函数
+                self._write_scan_to_h5([img], [x], [y], h5_path)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
