@@ -7,7 +7,6 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import traceback
 import h5py
-from dataclasses import dataclass
 
 # PyQt6 导入
 from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
@@ -16,16 +15,6 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
 from gui_generate import ModernUI
-
-
-# =========================================================
-#  保存格式
-# =========================================================
-@dataclass
-class PtyParams():
-    wavelength: float
-    dp: np.ndarray
-    pos: list[float]
 
 # =========================================================
 #  硬件加载线程
@@ -130,7 +119,10 @@ class InteractiveImageView(QGraphicsView):
         else:
             self.pixmap_item.setPixmap(pix)
         
-        # 处理 Mask (十字线)
+        # 定义圆的半径
+            radius = w - 10
+
+        # 处理 Mask (十字线 + 圆)
         if show_mask:
             cx, cy = w / 2, h / 2
             
@@ -146,25 +138,42 @@ class InteractiveImageView(QGraphicsView):
                 # 创建线条时分别传入对应的笔
                 self.v_line = self.scene.addLine(cx, 0, cx, h, pen_v)
                 self.h_line = self.scene.addLine(0, cy, w, cy, pen_h)
+                self.circle = self.scene.addEllipse(
+                    cx - radius,  # 左上角 x
+                    cy - radius,  # 左上角 y
+                    radius * 2,   # 宽 (直径)
+                    radius * 2,   # 高 (直径)
+                    pen_circle
+                )
                 
                 # 设置层级，确保显示在图片上方
                 self.v_line.setZValue(1)
                 self.h_line.setZValue(1)
+                self.circle.setZValue(1)
             else:
                 # 更新线条位置
                 self.v_line.setLine(cx, 0, cx, h)
                 self.h_line.setLine(0, cy, w, cy)
-                
+                self.circle.setRect(
+                    cx - radius, 
+                    cy - radius, 
+                    radius * 2, 
+                    radius * 2
+                )
+
                 # 【关键】更新笔的样式 (确保颜色和粗细实时生效)
                 self.v_line.setPen(pen_v)
                 self.h_line.setPen(pen_h)
+                self.circle.setPen(pen_circle)
                 
                 self.v_line.setVisible(True)
                 self.h_line.setVisible(True)
+                self.circle.setVisible(True)        
         else:
             if self.v_line:
                 self.v_line.setVisible(False)
                 self.h_line.setVisible(False)
+                self.circle.setVisible(False)
 
         self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
 
@@ -205,6 +214,7 @@ class LogicWindow(ModernUI):
         # --- 2. 内部变量 ---
         self.camera = None
         self.motion = None
+        self.images = []
         
         # 实时流定时器
         self.timer = QTimer()
@@ -832,9 +842,6 @@ class LogicWindow(ModernUI):
             self.log_error("扫描器未初始化")
             return
         
-        # 3. 初始化数据缓存 List，用于存放 PtyParams 对象
-        self.scan_data_buffer = [] 
-        
         # 4. 设置文件名
         mode_text = self.combo_scan_mode.currentText() 
         self.current_scan_h5_name = f"Scan_{mode_text}.h5"
@@ -846,24 +853,13 @@ class LogicWindow(ModernUI):
         self.scan_timer = QTimer()
         self.scan_timer.timeout.connect(self._scan_step)
         self.scan_timer.start(200) # 根据需要在 100-500ms 之间调整
+        # 获取波长
+        try:
+            wl = float(self.wavelength_spin.value())
+        except: 
+            wl = 633.0
 
-
-    def _scan_step(self):
-        # --- 扫描结束检查 ---
-        if self.scan_idx >= len(self.scanner.x):
-            self.scan_timer.stop()
-            self.log_success("扫描采集完成，正在写入 H5 文件...")
-            
-            # === 最后统一保存 H5 ===
-            self._write_scan_buffer_to_h5()
-            
-            # 回到起点
-            final_x = self.scanner.final_pos[0]
-            final_y = self.scanner.final_pos[1]
-            self._move_logical_delta(-final_x, 0)
-            self._move_logical_delta(-final_y, 1)
-            return
-            
+    def _scan_step(self):      
         # --- 正常步进 ---
         dx = self.scanner.x[self.scan_idx]
         dy = self.scanner.y[self.scan_idx]
@@ -875,6 +871,9 @@ class LogicWindow(ModernUI):
         # 2. 保存 PNG (仅用于显示) 并获取原始数据
         frame_name = f"scan_{self.scan_idx:04d}"
         img_data, cur_x, cur_y = self.save_current_frame(base_name=frame_name)
+
+        pos_x[self.scan_idx] = cur_x
+        pos_y[self.scan_idx] = cur_y
         
         if img_data is not None:
             # 3. 处理暗场
@@ -886,74 +885,66 @@ class LogicWindow(ModernUI):
             else:
                 final_data = img_data
 
-            # 4. 获取波长
-            try:
-                wl = float(self.wavelength_spin.value())
-            except: 
-                wl = 633.0
-
-            # 5. 【关键】构建 PtyParams Dataclass 并存入列表
-            # 注意：pos 按照 [x, y] 格式存储
-            param = PtyParams(
-                wavelength=wl,
-                dp=final_data,
-                pos=[cur_x, cur_y]
-            )
-            self.scan_data_buffer.append(param)
+            dp[self.scan_idx] = final_data
         
         self.scan_idx += 1
 
-    def _write_scan_buffer_to_h5(self):
-        """将内存中的 scan_data_buffer (PtyParams列表) 统一写入 H5"""
-        if not self.scan_data_buffer:
-            self.log_warning("没有数据需要保存")
+        # --- 扫描结束检查 ---
+        if self.scan_idx >= len(self.scanner.x):
+            self.scan_timer.stop()
+            self.log_success("扫描采集完成，正在写入 H5 文件...")
+            
+            # === 最后统一保存 H5 ===
+            self._write_scan_to_h5()
+            
+            # 回到起点
+            final_x = self.scanner.final_pos[0]
+            final_y = self.scanner.final_pos[1]
+            self._move_logical_delta(-final_x, 0)
+            self._move_logical_delta(-final_y, 1)
             return
-
+    
+    def _write_scan_to_h5(self):
+        """
+        将当前扫描数据写入 H5 文件。(dp, pos_x, pos_y, wl)
+        """
         h5_path = os.path.join(self.save_dir, self.current_scan_h5_name)
         
         try:
-            # 1. 使用列表推导式提取数据堆栈
-            # dp_stack shape: (N, H, W)
-            dp_stack = np.array([p.dp for p in self.scan_data_buffer])
-            
-            # pos_stack shape: (N, 2) -> 分离为 x 和 y
-            pos_list = [p.pos for p in self.scan_data_buffer] # list of [x,y]
-            pos_x = np.array([p[0] for p in pos_list])
-            pos_y = np.array([p[1] for p in pos_list])
-            
-            # 取第一个数据的波长作为全局波长
-            wl = self.scan_data_buffer[0].wavelength
+                # --- 将 Data 写入 H5 ---
+            dp_arr = np.array(dp)       
+            pos_x_arr = np.array(pos_x)
+            pos_y_arr = np.array(pos_y)
 
-            # 2. 写入 H5
             with h5py.File(h5_path, 'w') as f:
-                entry = f.create_group("entry")
+                exp_data = f.create_group("scan_data")
                 
-                # 数据组
-                data_grp = entry.create_group("data")
-                data_grp.create_dataset("data", data=dp_stack, compression="gzip")
+                # 1. 写入图像数据
+                data_grp = exp_data.create_group("data")
+                data_grp.create_dataset(
+                    "data", 
+                    data=dp_arr,        # 使用转换后的 numpy 数组
+                    compression="gzip"  # 只有 numpy 数组才能支持压缩
+                )
                 
-                # 位置组
-                pos_grp = entry.create_group("position")
-                pos_grp.create_dataset("x", data=pos_x)
-                pos_grp.create_dataset("y", data=pos_y)
+                # 2. 写入坐标数据
+                pos_grp = exp_data.create_group("position")
+                pos_grp.create_dataset("x", data=pos_x_arr) # 使用转换后的 numpy 数组
+                pos_grp.create_dataset("y", data=pos_y_arr) # 使用转换后的 numpy 数组
                 
-                # 光束参数
-                entry.create_group("beam").create_dataset("incident_wavelength", data=wl)
+                # 3. 写入波长 (float 直接写没问题，但为了统一也可以转 numpy)
+                exp_data.create_group("wavelength").create_dataset(
+                    "incident_wavelength", 
+                    data=wl 
+                )
                 
-                # 标记属性
-                if self.dark_frame is not None:
-                    data_grp.attrs['dark_subtracted'] = True
-                
-                f.attrs['total_frames'] = len(self.scan_data_buffer)
-                f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
-
-            self.log_success(f"H5文件写入成功: {self.current_scan_h5_name}")
-            
-            # 3. 清空缓存释放内存
-            self.scan_data_buffer = []
+                # 4. 其他属性
+                # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
+                exp_data.attrs['total_frames'] = dp_arr.shape[0] 
+                exp_data.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
 
         except Exception as e:
-            self.log_error(f"H5 统一保存失败: {e}")
+            self.log_error(f"H5 保存失败: {e}")
             traceback.print_exc()
 
     def set_exposure_time(self):
@@ -1008,7 +999,7 @@ class LogicWindow(ModernUI):
                     # Position
                     pos_grp = entry.create_group("position")
                     pos_grp.create_dataset("x", data=[cur_x])
-                    pos_grp.create_dataset("y", data=[cur_y])
+                    pos_grp.create_dataset("y", data=[cur_y]) 
                     
                     # Beam
                     entry.create_group("beam").create_dataset("incident_wavelength", data=wl)
