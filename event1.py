@@ -839,9 +839,19 @@ class LogicWindow(ModernUI):
             self.log_error("扫描器未初始化")
             return
         
+        if self.dark_frame is None:
+            confirm = QMessageBox.question(
+                self, 
+                "是否采集当前环境的暗场？\n",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if confirm == QMessageBox.StandardButton.Yes:
+                self.dark_frame = self.camera.read_newest_image()
+                self.log_success("暗场采集完成")
+
         # 4. 设置文件名
-        mode_text = self.combo_scan_mode.currentText() 
-        self.current_scan_h5_name = f"Scan_{mode_text}.h5"
+        self.current_scan_h5_name = f"scandata.h5"
         
         self.log_info(f"开始采集 {len(self.scanner.x)} 点... 数据将暂存内存")
 
