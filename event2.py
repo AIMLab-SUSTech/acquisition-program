@@ -44,7 +44,7 @@ class DeviceLoader(QThread):
 
             if self.dt == 'camera' and self.dn in cam_map:
                 mod_name, cls_name = cam_map[self.dn]
-                module = __import__(mod_name, fromlist=[cls_name])
+                module = __import__(mod_name, fromlist=[cls_name]) 
                 cls = getattr(module, cls_name) # 先获取类，不直接实例化
 
                 # 1. 根据不同相机类型进行实例化

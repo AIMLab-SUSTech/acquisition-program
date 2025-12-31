@@ -849,7 +849,22 @@ class LogicWindow(ModernUI):
             )
             if confirm == QMessageBox.StandardButton.Yes:
                 self.dark_frame = self.camera.read_newest_image()
+                self.dark_frame = self.crop_image(np.float32(self.dark_frame))
                 self.log_success("暗场采集完成")
+        
+        if self.dark_frame is not None:
+            confirm = QMessageBox.question(
+                self, 
+                "采集检查",                 # <--- 这里是标题 (Title)
+                "是否开始采集？",   # <--- 这里是内容 (Text)
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if confirm == QMessageBox.StandardButton.Yes:
+                pass
+            else:
+                self.log_info("采集已取消")
+                return
 
         # 4. 设置文件名
         self.current_scan_h5_name = f"scandata.h5"
@@ -862,7 +877,7 @@ class LogicWindow(ModernUI):
         self.scan_timer.timeout.connect(self._scan_step)
         self.scan_timer.start(200) # 根据需要在 100-500ms 之间调整
 
-    def _scan_step(self):      
+    def _scan_step(self):       
         # --- 正常步进 ---
         dx = self.scanner.x[self.scan_idx]
         dy = self.scanner.y[self.scan_idx]
@@ -895,10 +910,10 @@ class LogicWindow(ModernUI):
         # --- 扫描结束检查 ---
         if self.scan_idx >= len(self.scanner.x):
             self.scan_timer.stop()
-            self.log_success("扫描采集完成，正在写入 H5 文件...")
             
             # === 最后统一保存 H5 ===
             self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
+            self.log_success("写入 H5 文件完成")
             
             # 回到起点
             final_x = self.scanner.final_pos[0]
