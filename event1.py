@@ -727,8 +727,6 @@ class LogicWindow(ModernUI):
                     self.sync_hardware_position()
             except Exception as e:
                 self.log_error(f"回零失败: {e}")
-        except Exception as e:
-            self.log_error(f"回零异常: {e}")
 
     def preview_scan_path(self):
         try:
