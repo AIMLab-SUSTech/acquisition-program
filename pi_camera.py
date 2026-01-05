@@ -104,11 +104,9 @@ class PICamera(Camera):
                 
                 if img is not None:
                     return img.astype(np.uint16)
-                return None
             except Exception as e:
                 # 忽略读取过程中的瞬时错误，防止崩毁
-                # print(f"读取图像失败: {e}") 
-                return None
+                print(f"读取图像失败: {e}") 
         return None
 
     def get_frame_period(self):
