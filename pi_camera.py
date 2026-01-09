@@ -224,7 +224,7 @@ if __name__ == "__main__":
     # 示例：如何调用这个封装类
     
     # 1. 实例化
-    cam = LightFieldCamera(visible=True)
+    cam = PICamera(visible=True)
     
     # 2. 读取温度
     cam.get_temperature_status()
