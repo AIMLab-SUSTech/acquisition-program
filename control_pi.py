@@ -12,11 +12,11 @@ import clr # 需要 pythonnet 库
 CONFIG = {
     # --- 保存设置 ---
     "save_dir": r"D:\Experiment_Data",   # 结果保存根目录
-    "filename_prefix": "scan_sample",    # 文件名前缀
+    "filename": "scan_sample",    # 文件名前缀
     
     # --- 扫描参数 ---
-    "scan_range_x": 1.0,    # X轴扫描范围 (mm)
-    "scan_range_y": 1.0,    # Y轴扫描范围 (mm)
+    "scan_range_x": 0.2,    # X轴扫描范围 (mm)
+    "scan_range_y": 0.2,    # Y轴扫描范围 (mm)
     "step_size": 0.1,       # 步长 (mm)
     "settle_time": 0.2,     # 电机移动后的稳定等待时间 (秒)
     
@@ -52,8 +52,8 @@ class XPSDriver:
         try:
             # -----------------------------------------------------------
             # [填空] 请在此处引入 newportxps 并实例化
-            # from newportxps import NewportXPS
-            # self.xps = NewportXPS(ip)
+            from newportxps import NewportXPS
+            self.xps = NewportXPS(ip, port)
             # -----------------------------------------------------------
             self.connected = True
             print("[XPS] 连接成功")
@@ -64,16 +64,17 @@ class XPSDriver:
         """执行绝对移动并阻塞等待"""
         if not self.connected: return
 
-        # print(f"[XPS] Move -> X:{x:.3f}, Y:{y:.3f}")
+        print(f"[XPS] Move -> X:{x:.3f}, Y:{y:.3f}")
         
         # -----------------------------------------------------------
         # [填空] 硬件移动指令
-        # self.xps.group_move_absolute(self.groups[0], [x])
-        # self.xps.group_move_absolute(self.groups[1], [y])
+        self.xps.group_move_absolute(self.groups[0], [x])
+        self.xps.group_move_absolute(self.groups[1], [y])
         # -----------------------------------------------------------
         
         # 模拟硬件耗时 (实际请确保驱动是阻塞的，或者在这里加 while is_moving check)
-        time.sleep(0.01) 
+        while self.xps.group_is_moving(self.groups[0]) or self.xps.group_is_moving(self.groups[1]):
+            time.sleep(str2num(CONFIG["settle_time"])) 
 
     def close(self):
         print("[XPS] 断开连接")
@@ -136,7 +137,9 @@ class PICameraDriver:
                 print(f"[Camera] 目标温度已设定: {temp_target} C")
                 
                 # 可选: 等待温度锁定 (Wait for Lock)
-                # while self.experiment.GetValue(self.CameraSettings.SensorTemperatureStatus) != ...
+                while self.experiment.GetValue(self.CameraSettings.SensorTemperatureStatus) != SensorTemperatureStatus.Locked:
+                    time.sleep(0.5)
+                print("[Camera] 温度已锁定")
             else:
                 print("[Camera] 警告: 此相机不支持温度控制")
         except Exception as e:
@@ -225,7 +228,7 @@ def run_experiment():
     # 1. 准备硬件
     print("\n=== 初始化硬件 ===")
     xps = XPSDriver(CONFIG["xps_ip"], CONFIG["xps_port"], CONFIG["group_names"])
-    cam = LightFieldCameraDriver()
+    cam = PICameraDriver()
     
     # 2. 应用配置 (曝光, 温度, ROI)
     print("\n=== 应用配置 ===")
@@ -277,7 +280,7 @@ def run_experiment():
                 print(f"进度: {i+1}/{total_points} | 速度: {speed:.2f} fps | 剩余: {remaining:.1f} s")
 
     except KeyboardInterrupt:
-        print("\n[Stop] 用户中断扫描！正在保存已采集数据...")
+        print("\n[Stop] 用户中断扫描！")
     except Exception as e:
         print(f"\n[Error] 发生错误: {e}")
         import traceback
@@ -288,8 +291,7 @@ def run_experiment():
         print("\n=== 正在写入硬盘 (请勿关闭) ===")
         
         # 准备路径
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        full_dir = os.path.join(CONFIG["save_dir"], f"{CONFIG['filename_prefix']}_{timestamp}")
+        full_dir = os.path.join(CONFIG["save_dir"], f"{CONFIG['filename']}")
         if not os.path.exists(full_dir): os.makedirs(full_dir)
         h5_path = os.path.join(full_dir, "data.h5")
         
