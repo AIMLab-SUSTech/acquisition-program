@@ -58,7 +58,7 @@ class smartact(MotionController):
             self.motion.home(axis=axis)
 
 class xps(MotionController):
-    def __init__(self, IP='192.168.254.254'):
+    def __init__(self, IP='192.168.0.254'):
         super().__init__()
         self.xps = None
         self.groups = []
@@ -70,24 +70,28 @@ class xps(MotionController):
         except Exception as e:
             print(f'XPS 初始化失败: {e}')
 
-    def init_groups(self, group_list=['Group3', 'Group4']):
+    def init_groups(self, group_list=[]):
         """初始化轴组，Axis 0 对应 list[0], Axis 1 对应 list[1]"""
         if not self.xps: return
         self.groups = []
         status = self.xps.get_group_status()
         for g in group_list:
-            # 2. 判断是否已经 Ready (通常状态码 10-12 代表 Ready，视具体 API 而定)
+            # 2. 判断是否已经 Ready 
             if status.get(g, '').startswith('Ready'):
                 print(f"轴组 {g} 已经是 Ready 状态，跳过初始化，保持当前位置。")
                 self.groups.append(g)
-                continue # 跳过后面步骤，直接下一个轴
             
             # 3. 如果没 Ready，再执行那一套繁琐的流程
-            print(f"轴组 {g} 未就绪 (状态: {status.get(g, '')})，开始初始化...")
-            self.xps.initialize_group(g) # 再初始化
-            self.xps.home_group(g)
-            self.groups.append(g)
-            print(f"XPS: {g} 初始化完成")
+            else:
+                print(f"轴组 {g} 未就绪 (状态: {status.get(g, '')})，开始初始化...")
+                try:
+                    self.xps.initialize_group(g) # 再初始化
+                    self.xps.home_group(g)
+                    self.groups.append(g)
+                    print(f"XPS: {g} 初始化完成")
+                except Exception as e:
+                    print(f"XPS: {g} 初始化失败: {e},手动设置")
+                    self.groups.append(g)
 
     def _get_stage_name(self, axis):
         """内部辅助: 获取 Group.Pos 字符串"""

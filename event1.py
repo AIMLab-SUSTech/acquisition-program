@@ -68,7 +68,7 @@ class DeviceLoader(QThread):
                 if self.device_name == "NewPort":
                     from motion_controller import xps
                     device_instance = xps(IP='192.168.0.254')
-                    device_instance.init_groups(['Group3', 'Group4'])
+                    device_instance.init_groups(['Group5', 'Group6'])
                 elif self.device_name == "Nators":
                     from motion_controller import nators
                     device_instance = nators(ip_address="192.168.0.254")
