@@ -59,6 +59,10 @@ class DeviceLoader(QThread):
                 elif self.device_name == "VSY":
                     from new_vsy_camera import NewVSYCamera                     
                     device_instance = NewVSYCamera()
+                elif self.device_name == "Galaxy":
+                    from GalaxyCamera  import GalaxyCamera                        
+                    device_instance = GalaxyCamera()
+                    device_instance.start_acquisition()
 
             elif self.device_type == 'stage':
                 if self.device_name == "NewPort":

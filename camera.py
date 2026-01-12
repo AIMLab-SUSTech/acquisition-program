@@ -2,6 +2,9 @@ import numpy as np
 from pylablib.devices import uc480, DCAM
 from abc import ABC, abstractmethod
 import time
+import os
+import sys
+
 
 class Camera(ABC):
     def __init__(self):
@@ -272,117 +275,155 @@ class Basler(Camera):
             print(f"Basler get_bit_depth error: {e}")
             return 8
 
-# class IC4Camera(Camera):
-#     class _NumpyCaptureListener(ic4.QueueSinkListener):
-#         def __init__(self):
-#             self.latest_frame = None
+class GalaxyCamera(Camera):
+    def __init__(self):
+        super().__init__()
+        self.device_name = "Galaxy"
+        self.cam = None
+        
+        # --- 1. 在这里尝试导入 (懒加载) ---
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # 拼接出 gxipy 上一级文件夹的路径: .../dll/Galaxy
+            # 注意：如果我们要 import gxipy，必须把 gxipy 的【父文件夹】加入路径
+            lib_path = os.path.join(current_dir, "dll", "Galaxy")
+            
+            # 只有当路径不在系统路径里时才添加，防止重复添加
+            if lib_path not in sys.path:
+                sys.path.append(lib_path)
+                # print(f"已添加库路径: {lib_path}")  # 调试用，确认路径对不对
+                
+            import gxipy as gx
+            from gxipy import gxidef  # 显式导入 gxidef 模块
+            from gxipy.ImageProc import Utility
+            
+            # --- 2. 关键步骤：把库绑定到 self 上 ---
+            # 这样类的其他函数才能通过 self.gx, self.Utility 访问到它们
+            self.gx = gx
+            self.gxidef = gxidef
+            self.Utility = Utility
+            self.sdk_loaded = True
+            
+        except ImportError:
+            print("警告: 未找到 gxipy 库，Galaxy相机不可用。")
+            self.sdk_loaded = False
+            return
+        # -------------------------------------
 
-#         def sink_connected(self, sink: ic4.QueueSink, image_type: ic4.ImageType, min_buffers_required: int) -> bool:
-#             return True
+        self.device_manager = self.gx.DeviceManager() # 使用 self.gx
+        
+        try:
+            dev_num, dev_info_list = self.device_manager.update_all_device_list()
+            if dev_num == 0:
+                print("未发现 Galaxy 相机")
+                return
+            
+            self.cam = self.device_manager.open_device_by_index(1)
+            self.data_stream = self.cam.data_stream[0]
+            self.feature_control = self.cam.get_remote_device_feature_control()
+            self.image_convert = self.device_manager.create_image_format_convert()
+            print(f"Galaxy 相机已初始化: {dev_info_list[0].get('model_name')}")
+            
+        except Exception as e:
+            print(f"Galaxy 初始化失败: {e}")
 
-#         def frames_queued(self, sink: ic4.QueueSink):
-#             try:
-#                 buffer = sink.pop_output_buffer()
-#                 np_array = buffer.numpy_wrap()
-#                 self.latest_frame = np_array.copy()
+    def set_ex_time(self, ex_time):
+        if self.cam is None: return
+        try:
+            exposure_us = ex_time * 1e6
+            float_feature = self.feature_control.get_float_feature("ExposureTime")
+            range_info = float_feature.get_range()
+            # print(f"调试信息 - 曝光参数范围: {range_info}")
+            min_exposure = range_info['min']
+            max_exposure = range_info['max']
+            float_feature.set(max(min_exposure, min(exposure_us, max_exposure)))
+        except Exception as e:
+            print(f"Galaxy 设置曝光失败: {e}")
 
-#             except Exception as e:
-#                 print(f"帧处理异常: {str(e)}")
+    def start_acquisition(self):
+        if self.cam is None: return
+        try:
+            if self.feature_control.is_readable("TriggerMode"):
+                self.feature_control.get_enum_feature("TriggerMode").set("Off")
+            self.cam.stream_on()
+        except Exception as e:
+            print(f"Galaxy 开始采集失败: {e}")
 
-#     def __init__(self, width, height):
+    def stop_acquisition(self):
+        if self.cam is None: return
+        try:
+            self.cam.stream_off()
+        except Exception as e:
+            print(f"Galaxy 停止采集失败: {e}")
 
-#         super().__init__()
-#         self.grabber = None
-#         self.listener = None
-#         self.sink = None
-#         self._last_frame = None
-#         self._timestamps = []
-#         self._initialize(width, height)
+    def read_newest_image(self):
+        if self.cam is None: return None
+        try:
+            raw_image = self.data_stream.get_image(timeout=1000)
+            if raw_image is None: return None
 
-#     def _initialize(self, width, height):
-#         try:
-#             ic4.Library.init()
-#             device_list = ic4.DeviceEnum.devices()
-#             if not device_list:
-#                 raise RuntimeError("未检测到可用相机设备")
+            # --- 3. 调用时要用 self.gxidef 和 self.Utility ---
+            # 注意：这里不能直接写 GxFrameStatusList，要写 self.gxidef.GxFrameStatusList
+            if raw_image.get_status() == self.gxidef.GxFrameStatusList.SUCCESS:
+                pixel_format = raw_image.get_pixel_format()
+                
+                # 使用 self.Utility
+                if self.Utility.is_gray(pixel_format):
+                    numpy_image = raw_image.get_numpy_array()
+                    if numpy_image is None:
+                        # 使用 self.gxidef
+                        self.image_convert.set_dest_format(self.gxidef.GxPixelFormatEntry.MONO8)
+                        output_image = self.image_convert.convert(raw_image)[0]
+                        numpy_image = np.frombuffer(output_image, dtype=np.ubyte).reshape(raw_image.get_height(), raw_image.get_width())
+                else:
+                    self.image_convert.set_dest_format(self.gxidef.GxPixelFormatEntry.RGB8)
+                    output_image = self.image_convert.convert(raw_image)[0]
+                    numpy_image = np.frombuffer(output_image, dtype=np.ubyte).reshape(raw_image.get_height(), raw_image.get_width(), 3)
+                
+                return numpy_image
+            return None
+        except Exception as e:
+            print(f"Galaxy 获取图像失败: {e}")
+            return None
 
-#             self.dev_info = device_list[0]
-#             print(self.dev_info)
+    def get_frame_period(self):
+        if self.cam is None: return 0
+        try:
+            current_fps = self.feature_control.get_float_feature("AcquisitionFrameRate").get()
+            return 1.0 / current_fps if current_fps > 0 else 0.0
+        except:
+            return 0.0
 
-#             self.grabber = ic4.Grabber()
+    def get_bit_depth(self):
+        if self.cam is None: return 8
+        try:
+            pixel_format_str = self.feature_control.get_enum_feature("PixelFormat").get()[1]
+            if "8" in pixel_format_str: return 8
+            elif "10" in pixel_format_str: return 10
+            elif "12" in pixel_format_str: return 12
+            elif "16" in pixel_format_str: return 16
+            return 8
+        except:
+            return 8
 
-#             self.grabber.device_open(self.dev_info)
-#             self.grabber.device_property_map.set_value(ic4.PropId.PIXEL_FORMAT, ic4.PixelFormat.Mono16)
+    def close(self):
+        if self.cam is not None:
+            try:
+                self.cam.stream_off()
+                self.cam.close_device()
+            except:
+                pass
+            self.cam = None
 
-
-
-#             self.grabber.device_property_map.set_value(ic4.PropId.WIDTH, width)
-#             self.grabber.device_property_map.set_value(ic4.PropId.HEIGHT, height)
-
-#             self.listener = self._NumpyCaptureListener()
-#             self.sink = ic4.QueueSink(
-#                 self.listener,
-#                 [ic4.PixelFormat.Mono16],  # 根据实际像素格式调整
-#                 max_output_buffers=1
-#             )
-#         except ic4.IC4Exception as e:
-#             raise RuntimeError(f"相机初始化失败: {str(e)}") from e
-
-#     def _release_resources(self):
-#         try:
-#             if self.grabber is not None:
-#                 self.grabber.stream_stop()
-#                 self.grabber.device_close()
-#         except Exception as e:
-#             print(f"资源释放异常: {str(e)}")
-
-#     def close(self):
-#         self._release_resources()
-
-#     def set_ex_time(self, ex_time: float):
-#         try:
-
-#             ex_us = float(ex_time * 1e6)
-#             self.grabber.device_property_map.set_value(ic4.PropId.EXPOSURE_AUTO, "Off")
-#             self.grabber.device_property_map.set_value(ic4.PropId.EXPOSURE_TIME, ex_us)
-#             # self.grabber.device_property_map.set_value(ic4.PropId.EXPOSURE_AUTO, "Off")
-#             ex_time = self.grabber.device_property_map.get_value_float(ic4.PropId.EXPOSURE_TIME)
-#             print(f"曝光时间已设置为: {ex_time/1000} 毫秒")
-#         except (AttributeError, ic4.IC4Exception) as e:
-#             raise RuntimeError(f"设置曝光时间失败: {str(e)}") from e
-
-#     def start_acquisition(self):
-#         """启动图像采集"""
-#         try:
-#             self.grabber.stream_setup(self.sink)
-#             print("图像采集已启动")
-#         except ic4.IC4Exception as e:
-#             raise RuntimeError(f"启动采集失败: {str(e)}") from e
-
-#     def read_newest_image(self) -> np.ndarray:
-
-#         try:
-#             frame = self.listener.latest_frame.astype(np.uint16)
-#             self.listener.latest_frame = None
-#             return frame
-#         except Exception as e:
-#             print(f'IC4获取图像失败{e}')
-
-
-#     def get_frame_period(self) -> float:
-#         try:
-#             fps = self.grabber.device_property_map.get_value_float(ic4.PropId.ACQUISITION_FRAME_RATE)
-#             return 1.0 / fps if fps > 0 else 0.0
-#         except (AttributeError, ic4.IC4Exception):
-#             print(ic4.IC4Exception)
-
-#         return 0.0
+    def __del__(self):
+        self.close()
 
 if __name__ == '__main__':
     # camera = Camera()
     # camera.set_paramerters()
 
-    cam = IDS()
+    cam = GalaxyCamera()
 
     cam.start_acquisition()
     cam.set_ex_time(5/1000)
