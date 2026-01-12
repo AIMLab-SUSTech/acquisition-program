@@ -16,23 +16,34 @@ if sys.platform == 'linux2' or sys.platform == 'linux':
         print("Cannot find libgxiapi.so.")
 else:
     try:
-        env_dist = os.environ
-        GeniCam_AddPath32 = str(env_dist["GALAXY_GENICAM_ROOT"]) + r"\bin\Win32_i86"
-        GeniCam_AddPath64 = str(env_dist["GALAXY_GENICAM_ROOT"]) + r"\bin\Win64_x64"
-        GxiApi_AddPath32 = str(env_dist["GALAXY_GENICAM_ROOT"]).split("GenICam")[0] + r"\APIDll\Win32"
-        GxiApi_AddPath64 = str(env_dist["GALAXY_GENICAM_ROOT"]).split("GenICam")[0] + r"\APIDll\Win64"
+        # --- 修改开始：使用相对路径查找 DLL ---
+        import os.path
+        
+        # 1. 获取 gxwrapper.py 所在的目录 (例如: .../dll/Galaxy/gxipy)
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        
+        # 2. 获取上一级目录 (例如: .../dll/Galaxy)
+        # 假设 gxipy 和 bin 是同级文件夹
+        sdk_root = os.path.dirname(current_path)
+        
+        # 3. 拼接 DLL 所在的绝对路径
+        AddPath = os.path.join(sdk_root, "bin")
 
+        # 4. 根据 Python 版本加载 DLL
         if (sys.version_info.major == 3 and sys.version_info.minor >= 8) or (sys.version_info.major > 3):
-            os.add_dll_directory(GeniCam_AddPath32)
-            os.add_dll_directory(GeniCam_AddPath64)
-            os.add_dll_directory(GxiApi_AddPath32)
-            os.add_dll_directory(GxiApi_AddPath64)
+            # Python 3.8+ 需要显式添加 DLL 目录
+            if os.path.exists(AddPath): os.add_dll_directory(AddPath)
             
             dll = WinDLL('GxIAPI.dll', winmode=0)
         else:
+            # 旧版 Python 尝试修改 PATH (可选)
+            os.environ['PATH'] = AddPath + os.pathsep + os.environ['PATH']
             dll = WinDLL('GxIAPI.dll')
+            
+        # --- 修改结束 ---
+        
     except OSError:
-        print('Cannot find GxIAPI.dll.')
+        print('Cannot find GxIAPI.dll. Please check if "bin/Win64_x64/GxIAPI.dll" exists relative to gxipy.')
 
 
 # Error code
