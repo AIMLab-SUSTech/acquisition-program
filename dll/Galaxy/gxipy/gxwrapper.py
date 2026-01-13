@@ -43,7 +43,7 @@ else:
         # --- 修改结束 ---
         
     except OSError:
-        print('Cannot find GxIAPI.dll. Please check if "bin/Win64_x64/GxIAPI.dll" exists relative to gxipy.')
+        print('Cannot find GxIAPI.dll. Please check if "bin/GxIAPI.dll" exists relative to gxipy.')
 
 
 # Error code

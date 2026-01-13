@@ -71,11 +71,26 @@ class xps(MotionController):
             print(f'XPS 初始化失败: {e}')
 
     def init_groups(self, group_list=[]):
-        """初始化轴组，Axis 0 对应 list[0], Axis 1 对应 list[1]"""
+        # """初始化轴组"""
         if not self.xps: return
         self.groups = []
-        status = self.xps.get_group_status()
+        
+        # 获取所有组的状态
+        try:
+            status = self.xps.get_group_status()
+        except Exception as e:
+            print(f"获取状态列表失败: {e}")
+            status = {}
+
         for g in group_list:
+            # 【修改部分】: 手动强制设置 Group5 和 Group6
+            # 如果是这两个组，直接加入列表，不走下面的 initialize/home 流程
+            if g in ['Group5', 'Group6', 'Group7', 'Group8']:
+                print(f"警告: 强制手动加载轴组 {g}，跳过初始化检查。")
+                self.groups.append(g)
+                continue  # 直接进入下一次循环
+
+            # --- 原有逻辑保持不变 ---
             # 2. 判断是否已经 Ready 
             if status.get(g, '').startswith('Ready'):
                 print(f"轴组 {g} 已经是 Ready 状态，跳过初始化，保持当前位置。")
@@ -90,7 +105,8 @@ class xps(MotionController):
                     self.groups.append(g)
                     print(f"XPS: {g} 初始化完成")
                 except Exception as e:
-                    print(f"XPS: {g} 初始化失败: {e},手动设置")
+                    # 这里捕获了 system.ini 错误，防止程序崩溃
+                    print(f"XPS: {g} 初始化失败: {e}, 尝试强制加入列表")
                     self.groups.append(g)
 
     def _get_stage_name(self, axis):
