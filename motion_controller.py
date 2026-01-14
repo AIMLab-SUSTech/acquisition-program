@@ -1,7 +1,6 @@
-import time
-from pylablib.devices import SmarAct
 from abc import ABC, abstractmethod
-
+import ctypes
+from ctypes import create_string_buffer, c_uint
 
 class MotionController(ABC):
     def __init__(self):
@@ -58,76 +57,178 @@ class smartact(MotionController):
             self.motion.home(axis=axis)
 
 class xps(MotionController):
-    def __init__(self, IP='192.168.0.254'):
+    def __init__(self, IP='192.168.0.254', username='Administrator', password='Administrator'):
         super().__init__()
         self.xps = None
         self.groups = []
+        self._xps = None
+        self._sid = None
+        self.host = IP
+        self.username = username
+        self.password = password
+        self.port = 5001
+        self.timeout = 10
+        
         try:
-            from newportxps import NewportXPS
-            # 注意: 用户名密码通常是 Administrator
-            self.xps = NewportXPS(IP, username='Administrator', password='Administrator')
-            print(f"XPS: 已连接到 {IP}")
+            from newportxps.XPS_C8_drivers import XPS
+            self._xps = XPS()
+            # 直接通过 TCP 连接到服务器，绕过 SFTP
+            self._sid = self._xps.TCP_ConnectToServer(self.host, self.port, self.timeout)
+            if self._sid < 0:
+                print(f"XPS 连接失败: 无效的 socket ID {self._sid}")
+                self._sid = None
+            else:
+                try:
+                    err, msg = self._xps.Login(self._sid, self.username, self.password)
+                    if err != 0:
+                        print(f"XPS 登录失败: 错误码 {err}, {msg}")
+                        self._sid = None
+                    else:
+                        print(f"XPS: 已连接到 {IP}")
+                except Exception as e:
+                    print(f"XPS 登录失败: {e}")
+                    self._sid = None
         except Exception as e:
-            print(f'XPS 初始化失败: {e}')
+            print(f'XPS 连接失败: {e}')
+            self._xps = None
+            self._sid = None
 
     def init_groups(self, group_list=[]):
-        # """初始化轴组"""
-        if not self.xps: return
+        """初始化轴组"""
+        if not self._xps or self._sid is None:
+            return
+        
         self.groups = []
         
-        # 获取所有组的状态
-        try:
-            status = self.xps.get_group_status()
-        except Exception as e:
-            print(f"获取状态列表失败: {e}")
-            status = {}
-
+        # 直接添加用户指定的轴组，不依赖于 system.ini
         for g in group_list:
-            # 1. 判断是否已经 Ready 
-            if status.get(g, '').startswith('Ready'):
-                print(f"轴组 {g} 已经是 Ready 状态，跳过初始化，保持当前位置。")
-                self.groups.append(g)
+            self.groups.append(g)
+            print(f"已手动加载轴组: {g}")
             
-            # 2. 如果没 Ready，再执行那一套繁琐的流程
-            else:
-                print(f"轴组 {g} 未就绪 (状态: {status.get(g, '')})，开始初始化...")
-                try:
-                    self.xps.kill_group(g) # 先强制关闭
-                    self.xps.initialize_group(g) # 再初始化
-                    self.xps.home_group(g)
-                    self.groups.append(g)
-                    print(f"XPS: {g} 初始化完成")
-                except Exception as e:
-                    # 这里捕获了 system.ini 错误，防止程序崩溃
-                    print(f"XPS: {g} 初始化失败: {e}, 尝试强制加入列表")
-                    self.groups.append(g)
-
-    def _get_stage_name(self, axis):
-        """内部辅助: 获取 Group.Pos 字符串"""
-        if 0 <= axis < len(self.groups):
-            return f'{self.groups[axis]}.Pos'
-        return None
+            # 尝试初始化轴组
+            print(f"尝试初始化轴组 {g}...")
+            try:
+                # 1. 先 Kill 轴组
+                kill_result = self._xps.GroupKill(self._sid, g)
+                if kill_result[0] != 0:
+                    print(f"XPS Kill 轴组 {g} 失败: 错误码 {kill_result[0]}, {kill_result[1]}")
+                
+                # 2. 初始化轴组
+                init_result = self._xps.GroupInitialize(self._sid, g)
+                if init_result[0] != 0:
+                    print(f"XPS 初始化轴组 {g} 失败: 错误码 {init_result[0]}, {init_result[1]}")
+                
+                # 3. 执行 Home Search
+                home_result = self._xps.GroupHomeSearch(self._sid, g)
+                if home_result[0] != 0:
+                    print(f"XPS Home Search 轴组 {g} 失败: 错误码 {home_result[0]}, {home_result[1]}")
+                
+                print(f"XPS 轴组 {g} 初始化完成")
+            except Exception as e:
+                print(f"XPS 轴组 {g} 初始化失败: {e}")
 
     def move_by(self, distance, axis):
-        stage = self._get_stage_name(axis)
-        if stage and self.xps:
-            # relative=True 代表相对移动
-            self.xps.move_stage(stage, distance, relative=True)
+        """相对移动：通过计算绝对坐标实现"""
+        if axis < 0 or axis >= len(self.groups):
+            return
+        
+        group_name = self.groups[axis]
+        if not self._xps or self._sid is None:
+            return
+        
+        try:
+            # 1. 检查轴组状态
+            status_result = self._xps.GroupStatusGet(self._sid, group_name)
+            if status_result[0] != 0:
+                print(f"XPS 获取组状态失败 (Axis {axis}): 错误码 {status_result[0]}")
+                # 尝试初始化轴组
+                print(f"尝试初始化轴组 {group_name}...")
+                self._xps.GroupKill(self._sid, group_name)
+                self._xps.GroupInitialize(self._sid, group_name)
+                self._xps.GroupHomeSearch(self._sid, group_name)
+            
+            # 2. 获取当前位置（假设每个组只有一个 positioner）
+            pos_result = self._xps.GroupPositionCurrentGet(self._sid, group_name, 1)
+            if pos_result[0] != 0:
+                print(f"XPS 获取位置失败 (Axis {axis}): 错误码 {pos_result[0]}")
+                return
+            # 3. 检查当前位置是否为 None 或空列表
+            if len(pos_result) < 2 or pos_result[1] is None:
+                print(f"XPS: 无法获取 {group_name} 的当前位置，跳过移动")
+                return
+            current_pos = pos_result[1]
+            # 4. 计算目标位置
+            target_pos = current_pos + distance
+            # 5. 执行移动
+            move_result = self._xps.GroupMoveAbsolute(self._sid, group_name, [target_pos])
+            if move_result[0] != 0:
+                print(f"XPS 移动失败 (Axis {axis}): 错误码 {move_result[0]}, {move_result[1]}")
+        except Exception as e:
+            print(f"XPS 相对移动失败 (Axis {axis}): {e}")
 
     def move_to(self, position, axis):
-        stage = self._get_stage_name(axis)
-        if stage and self.xps:
-            # relative=False 代表绝对移动
-            self.xps.move_stage(stage, position, relative=False)
+        """绝对移动"""
+        if axis < 0 or axis >= len(self.groups):
+            return
+        
+        group_name = self.groups[axis]
+        if not self._xps or self._sid is None:
+            return
+        
+        try:
+            move_result = self._xps.GroupMoveAbsolute(self._sid, group_name, [position])
+            if move_result[0] != 0:
+                print(f"XPS 移动失败 (Axis {axis}): 错误码 {move_result[0]}, {move_result[1]}")
+        except Exception as e:
+            print(f"XPS 绝对移动失败 (Axis {axis}): {e}")
 
     def get_position(self, axis):
-        stage = self._get_stage_name(axis)
-        if stage and self.xps:
-            return self.xps.get_stage_position(stage)
+        """获取当前位置"""
+        if axis < 0 or axis >= len(self.groups):
+            return 0.0
+        
+        group_name = self.groups[axis]
+        if not self._xps or self._sid is None:
+            return 0.0
+        
+        try:
+            pos_result = self._xps.GroupPositionCurrentGet(self._sid, group_name, 1)
+            if pos_result[0] != 0:
+                print(f"XPS 读取位置失败 (Axis {axis}): 错误码 {pos_result[0]}")
+                return 0.0
+            # 检查返回值是否为 None 或空列表
+            if len(pos_result) < 2 or pos_result[1] is None:
+                print(f"XPS: {group_name} 位置为 None，返回默认值 0.0")
+                return 0.0
+            return pos_result[1]
+        except Exception as e:
+            print(f"XPS 读取位置失败 (Axis {axis}): {e}")
         return 0.0
 
     def status_report(self):
-        return self.xps.status_report()
+        """返回状态报告"""
+        if not self._xps or self._sid is None:
+            return {}
+        
+        try:
+            err, uptime = self._xps.ElapsedTimeGet(self._sid)
+            if err != 0:
+                print(f"获取运行时间失败: 错误码 {err}")
+                uptime = 0
+            
+            err, firmware = self._xps.FirmwareVersionGet(self._sid)
+            if err != 0:
+                print(f"获取固件版本失败: 错误码 {err}")
+                firmware = "Unknown"
+            
+            return {
+                "uptime": uptime,
+                "firmware": firmware,
+                "groups": self.groups
+            }
+        except Exception as e:
+            print(f"获取状态报告失败: {e}")
+            return {}
 
     def set_velocity(self, stage: str = None, velocity: int = 2.5, acceleration: int = None, min_jerktime: int = None,
                      max_jerktime: int = None):
