@@ -83,23 +83,16 @@ class xps(MotionController):
             status = {}
 
         for g in group_list:
-            # 【修改部分】: 手动强制设置 Group5 和 Group6
-            # 如果是这两个组，直接加入列表，不走下面的 initialize/home 流程
-            if g in ['Group5', 'Group6', 'Group7', 'Group8']:
-                print(f"警告: 强制手动加载轴组 {g}，跳过初始化检查。")
-                self.groups.append(g)
-                continue  # 直接进入下一次循环
-
-            # --- 原有逻辑保持不变 ---
-            # 2. 判断是否已经 Ready 
+            # 1. 判断是否已经 Ready 
             if status.get(g, '').startswith('Ready'):
                 print(f"轴组 {g} 已经是 Ready 状态，跳过初始化，保持当前位置。")
                 self.groups.append(g)
             
-            # 3. 如果没 Ready，再执行那一套繁琐的流程
+            # 2. 如果没 Ready，再执行那一套繁琐的流程
             else:
                 print(f"轴组 {g} 未就绪 (状态: {status.get(g, '')})，开始初始化...")
                 try:
+                    self.xps.kill_group(g) # 先强制关闭
                     self.xps.initialize_group(g) # 再初始化
                     self.xps.home_group(g)
                     self.groups.append(g)

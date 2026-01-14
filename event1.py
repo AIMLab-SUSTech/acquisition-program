@@ -31,51 +31,53 @@ class DeviceLoader(QThread):
         try:
             device_instance = None
             if self.device_type == 'camera':
-                if self.device_name == "IDS":
-                    from camera import IDS
-                    device_instance = IDS()
-                    device_instance.start_acquisition()
-                    device_instance.set_pixel_rate(7e7)
-                elif self.device_name == "Ham":
-                    from camera import Ham
-                    device_instance = Ham()
-                    device_instance.start_acquisition()
-                elif self.device_name == "Lucid":
-                    from lucid import LucidCamera
-                    device_instance = LucidCamera(max_tries=1, wait_time=1)
-                    device_instance.start_acquisition()
-                elif self.device_name == "PM":
-                    from photometrics import PyVCAM
-                    device_instance = PyVCAM()
-                    device_instance.start_acquisition()
-                elif self.device_name == "IDS_Peak":
-                    from peak import IDSPeakCamera
-                    device_instance = IDSPeakCamera()
-                    device_instance.start_acquisition()
-                elif self.device_name == "PI-mte3":
-                    from pi_camera import PICamera                        
-                    device_instance = PICamera()
-                    device_instance.start_acquisition()
-                elif self.device_name == "VSY":
-                    from new_vsy_camera import NewVSYCamera                     
-                    device_instance = NewVSYCamera()
-                elif self.device_name == "Galaxy":
-                    from GalaxyCamera  import GalaxyCamera                        
-                    device_instance = GalaxyCamera()
-                    device_instance.start_acquisition()
+                match(self.device_name):
+                    case "IDS":
+                        from camera import IDS
+                        device_instance = IDS()
+                        device_instance.start_acquisition()
+                        device_instance.set_pixel_rate(7e7)
+                    case "Ham":
+                        from camera import Ham
+                        device_instance = Ham()
+                        device_instance.start_acquisition()
+                    case "Lucid":
+                        from lucid import LucidCamera
+                        device_instance = LucidCamera(max_tries=1, wait_time=1)
+                        device_instance.start_acquisition()
+                    case "PM":
+                        from photometrics import PyVCAM
+                        device_instance = PyVCAM() 
+                        device_instance.start_acquisition()
+                    case "IDS_Peak":
+                        from peak import IDSPeakCamera
+                        device_instance = IDSPeakCamera()
+                        device_instance.start_acquisition()
+                    case "PI-mte3":
+                        from pi_camera import PICamera                        
+                        device_instance = PICamera()
+                        device_instance.start_acquisition()
+                    case "VSY":
+                        from new_vsy_camera import NewVSYCamera                     
+                        device_instance = NewVSYCamera()
+                    case "Galaxy":
+                        from GalaxyCamera  import GalaxyCamera                        
+                        device_instance = GalaxyCamera()
+                        device_instance.start_acquisition()
 
             elif self.device_type == 'stage':
-                if self.device_name == "NewPort":
-                    from motion_controller import xps
-                    device_instance = xps(IP='192.168.0.254')
-                    device_instance.init_groups(['Group5', 'Group6'])
-                elif self.device_name == "Nators":
-                    from motion_controller import nators
-                    device_instance = nators(ip_address="192.168.0.254")
-                    device_instance.open_system()
-                elif self.device_name == "SmartAct":
-                    from motion_controller import smartact
-                    device_instance = smartact()
+                match(self.device_name):
+                    case "NewPort":
+                        from motion_controller import xps
+                        device_instance = xps(IP='192.168.0.254')
+                        device_instance.init_groups(['Group5', 'Group6'])
+                    case "Nators":
+                        from motion_controller import nators
+                        device_instance = nators(ip_address="192.168.0.254")
+                        device_instance.open_system()
+                    case "SmartAct":
+                        from motion_controller import smartact
+                        device_instance = smartact()
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
@@ -84,6 +86,91 @@ class DeviceLoader(QThread):
 
         except Exception as e:
             self.finished_signal.emit(False, str(e))
+
+# =========================================================
+#  新增：后台扫描线程 (解决 UI 卡顿和采集同步问题)
+# =========================================================
+class ScanWorker(QThread):
+    # 定义信号：用来告诉主界面更新
+    # update_signal 传递: (图像数据, 当前X, 当前Y, 当前索引)
+    update_signal = pyqtSignal(object, float, float, int) 
+    log_signal = pyqtSignal(str, str) # (消息内容, 颜色类型)
+    finished_signal = pyqtSignal()
+
+    def __init__(self, camera, motion, scanner, exposure_time_ms, dark_frame=None):
+        super().__init__()
+        self.camera = camera
+        self.motion = motion
+        self.scanner = scanner
+        self.exposure_s = exposure_time_ms / 1000.0
+        self.dark_frame = dark_frame
+        self.is_running = True # 用于中途停止
+
+    def run(self):
+        total = len(self.scanner.x)
+        
+        for i in range(total):
+            if not self.is_running: break
+
+            # 1. 移动位移台
+            dx = self.scanner.x[i]
+            dy = self.scanner.y[i]
+            
+            # --- 移动逻辑 (这里复用了之前的相对移动逻辑，建议根据实际封装) ---
+            try:
+                # 简单粗暴：直接调用 motion 的相对移动
+                # 警告：这里假设 motion 对象是线程安全的，通常 C++ 底层驱动是阻塞的，所以没问题
+                self.motion.move_by(dx, axis=0) # 假设 0 是 X
+                self.motion.move_by(dy, axis=1) # 假设 1 是 Y
+                
+                # 很多时候图糊了或者全黑，是因为动得太快
+                time.sleep(0.01) 
+                
+            except Exception as e:
+                self.log_signal.emit(f"移动错误: {e}", "error")
+                break
+
+            # 2. 【核心修复】强制等待曝光
+            # 既然是同步采集，必须确保相机有足够时间曝光
+            # 如果是软触发模式，这里应该 call trigger()
+            # 如果是连续模式，sleep 等待这一帧刷过去
+            time.sleep(self.exposure_s + 0.05) # 多给 50ms 缓冲
+
+            # 3. 读取图像
+            raw_img = self.camera.read_newest_image()
+            
+            # 获取当前绝对坐标 (用于保存)
+            # 如果驱动读坐标慢，可以用理论坐标代替，这里尝试读硬件
+            cur_x = 0.0
+            cur_y = 0.0
+            try:
+                if hasattr(self.motion, 'get_position'):
+                    cur_x = self.motion.get_position(0)
+                    cur_y = self.motion.get_position(1)
+            except:
+                self.log_signal.emit(f"读取坐标错误: {e}", "error")
+                return
+
+            if raw_img is not None:
+                # 处理暗场 (如果在线程里做耗时计算，UI会更流畅)
+                if self.dark_frame is not None:
+                    img_float = raw_img.astype(np.float32)
+                    subtracted = img_float - self.dark_frame
+                    subtracted[subtracted < 0] = 0
+                    final_data = subtracted
+                else:
+                    final_data = raw_img
+                
+                # 发送信号给主界面保存和显示
+                self.update_signal.emit(final_data, cur_x, cur_y, i)
+            else:
+                self.log_signal.emit(f"第 {i} 点采集失败: 空图像", "warning")
+
+        # 循环结束
+        self.finished_signal.emit()
+
+    def stop(self):
+        self.is_running = False
 
 # =========================================================
 #  自定义图像显示控件
@@ -870,60 +957,56 @@ class LogicWindow(ModernUI):
 
         # 4. 设置文件名
         self.current_scan_h5_name = f"scandata.h5"
-        
         self.log_info(f"开始采集 {len(self.scanner.x)} 点... 数据将暂存内存")
 
-        # 5. 启动定时器
-        self.scan_idx = 0
-        self.scan_timer = QTimer()
-        self.scan_timer.timeout.connect(self._scan_step)
-        self.scan_timer.start(200) # 根据需要在 100-500ms 之间调整
+        exposure_val = self.exposure_spin.value()
+        self.worker = ScanWorker(
+            camera=self.camera,
+            motion=self.motion,
+            scanner=self.scanner,
+            exposure_time_ms=exposure_val,
+            dark_frame=self.dark_frame
+        )
+        self.worker.update_signal.connect(self._update_scan_preview)
+        self.worker.log_signal.connect(self.on_worker_log)
+        self.worker.finished_signal.connect(self._scan_finished)
+        self.worker.start()
 
-    def _scan_step(self):       
-        # --- 正常步进 ---
-        dx = self.scanner.x[self.scan_idx]
-        dy = self.scanner.y[self.scan_idx]
+    def on_scan_step_received(self, img_data, cur_x, cur_y):
+        """线程每采完一张图，就会调用这个函数"""
         
-        # 1. 移动
-        self._move_logical_delta(dx, 0)
-        self._move_logical_delta(dy, 1)
-        
-        # 2. 保存 PNG (仅用于显示) 并获取原始数据
-        frame_name = f"scan_{self.scan_idx:04d}"
-        img_data, cur_x, cur_y = self.save_current_frame(base_name=frame_name)
-
+        # 1. 存入内存列表
+        self.dp.append(img_data)
         self.pos_x.append(cur_x)
         self.pos_y.append(cur_y)
         
-        if img_data is not None:
-            # 3. 处理暗场
-            if self.dark_frame is not None:
-                img_float = img_data.astype(np.float32)
-                subtracted = img_float - self.dark_frame
-                subtracted[subtracted < 0] = 0
-                final_data = subtracted
-            else:
-                final_data = img_data
+        # 2. 刷新界面显示 (这里显示的是真实保存的数据！)
+        # 如果是 float 数据(减过暗场)，为了显示需要转回 uint 或者归一化
+        show_img = img_data
+        # if img_data.dtype != np.uint16 and img_data.dtype != np.uint8:
+        #      show_img = np.clip(img_data, 0, 65535).astype(np.uint16)
+             
+        self.image_view.update_image(show_img, self.chk_mask.isChecked())
+            
+        # 4. 可选：实时保存单帧 TIF (方便你看图)
+        frame_name = f"scan_{idx:03d}.tif"
+        path = os.path.join(self.save_dir, frame_name)
+        Image.fromarray(show_img).save(path)
 
-        self.dp.append(final_data)
+    def on_scan_finished(self):
+        self.log_success("扫描线程结束，正在写入 H5...")
         
-        self.scan_idx += 1
+        # 写入 H5
+        self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
+        self.log_success("H5 文件写入完成！")
+        
+        # 回到原点 (可选)
+        # 注意：这里是在主线程执行，可以直接调
+        final_x = self.scanner.final_pos[0]
+        final_y = self.scanner.final_pos[1]
+        self._move_logical_delta(-final_x, 0)
+        self._move_logical_delta(-final_y, 1)
 
-        # --- 扫描结束检查 ---
-        if self.scan_idx >= len(self.scanner.x):
-            self.scan_timer.stop()
-            
-            # === 最后统一保存 H5 ===
-            self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
-            self.log_success("写入 H5 文件完成")
-            
-            # 回到起点
-            final_x = self.scanner.final_pos[0]
-            final_y = self.scanner.final_pos[1]
-            self._move_logical_delta(-final_x, 0)
-            self._move_logical_delta(-final_y, 1)
-            return
-    
     def _write_scan_to_h5(self,dp, pos_x, pos_y, h5_path=None):
         """
         将当前扫描数据写入 H5 文件。(dp, pos_x, pos_y, wl)
@@ -976,7 +1059,7 @@ class LogicWindow(ModernUI):
             self.save_dir = path
 
     def on_manual_save(self):
-        """响应'保存'按钮：保存PNG，并直接保存为单帧 H5"""
+        """响应'保存'按钮：保存当前视图为 tif"""
         if not self.confirm_directory():
             return
         
@@ -989,18 +1072,11 @@ class LogicWindow(ModernUI):
             final_name = filename.strip()
             
             # 1. 调用通用函数保存 PNG，并获取数据 (save_current_frame只负责PNG和返回数据)
-            img_data, cur_x, cur_y = self.save_current_frame(base_name=final_name)
+            img_data = self.save_current_frame(base_name=final_name)
             
             if img_data is None:
                 self.log_error("无法获取图像数据，保存中止")
                 return
-            try:
-                # 2. 手动保存 H5 (此处直接写入，不经过 PtyParams 列表，因为只有一帧)
-                h5_path = os.path.join(self.save_dir, f"{final_name}.h5")
-                self._write_scan_to_h5(img_data, cur_x, cur_y,h5_path)
-                self.log_success(f"保存 H5文件已保存: {final_name}.h5")
-            except Exception as e:
-                self.log_error(f"保存 H5写入失败: {e}")
         else:
             self.log_info("保存已取消")
 
@@ -1008,7 +1084,7 @@ class LogicWindow(ModernUI):
         """
         功能：
         1. 获取并裁剪图像
-        2. 保存为 PNG (可视化用)
+        2. 保存为 TIF (可视化用)
         3. 返回 (image_data, cur_x, cur_y) 供 Dataclass 或 H5 写入使用
         """
         if not self.camera: 
@@ -1040,19 +1116,13 @@ class LogicWindow(ModernUI):
             if not os.path.exists(self.save_dir): 
                 os.makedirs(self.save_dir)
             
-            path_png = os.path.join(self.save_dir, f"{base_name}.png")
-            
-            # 显示用的简单压缩 (不影响返回的原始 roi_img)
-            if roi_img.dtype == np.uint16:
-                img_vis = (roi_img / 256).astype(np.uint8) # 16bit->8bit
-            else:
-                img_vis = roi_img.astype(np.uint8)
+            path_tif = os.path.join(self.save_dir, f"{base_name}.tif")
             
             try:
-                Image.fromarray(img_vis).save(path_png)
-                self.log_info(f"图片已保存: {base_name}.png")
+                Image.fromarray(roi_img).save(path_tif)
+                self.log_info(f"图片已保存: {base_name}.tif")
             except Exception as e:
-                self.log_warning(f"PNG保存失败: {e}")
+                self.log_warning(f"TIF保存失败: {e}")   
 
             # 3. 返回原始数据
             return roi_img, cur_x, cur_y
