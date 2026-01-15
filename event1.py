@@ -1091,8 +1091,15 @@ class LogicWindow(ModernUI):
         self.log_info("扫描线程结束，正在写入 H5...")
         
         self.dark_frame = None
+
+        # 写入H5前，先将坐标居中
+        center_x = (max(self.pos_x) + min(self.pos_x)) / 2
+        center_y = (max(self.pos_y) + min(self.pos_y)) / 2
+        pos_x_centered = [x - center_x for x in self.pos_x]
+        pos_y_centered = [y - center_y for y in self.pos_y]
+
         # 写入 H5
-        self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
+        self._write_scan_to_h5(self.dp, pos_x_centered, pos_y_centered)
         self.log_success("H5 文件写入完成！")
         
         # 回到原点 (可选)
