@@ -109,6 +109,12 @@ class ScanWorker(QThread):
     def run(self):
         total = len(self.scanner.x)
         
+        if hasattr(self.camera, 'set_trigger_mode'):
+            # 停止实时流，准备精确采集
+            self.camera.set_trigger_mode('software')
+            # 给一点时间让相机反应
+            time.sleep(0.1)
+
         for i in range(total):
             if not self.is_running: break
 
@@ -123,31 +129,16 @@ class ScanWorker(QThread):
                 self.motion.move_by(dx, axis=0) # 假设 0 是 X
                 self.motion.move_by(dy, axis=1) # 假设 1 是 Y
                 
-                # 很多时候图糊了或者全黑，是因为动得太快
-                time.sleep(0.01) 
-                
             except Exception as e:
                 self.log_signal.emit(f"移动错误: {e}", "error")
                 break
 
             # 2. 【核心修复】强制等待曝光
-            # 既然是同步采集，必须确保相机有足够时间曝光
             time.sleep(self.exposure_s + 0.05) # 多给 50ms 缓冲
 
-            try:
-                # 这是一个简单的清空策略：尝试多读一次并丢弃
-                if hasattr(self.camera, 'clear_buffer'):
-                    self.camera.clear_buffer()
-                else:
-                    # 如果没有专用清空函数，就手动“读废”一张
-                    _ = self.camera.read_newest_image()
-            except:
-                pass
-
-            if hasattr(self.camera, 'trigger'):
-                self.camera.trigger()
             # 3. 读取图像
             raw_img = self.camera.read_newest_image()
+            raw_img = crop_image(raw_img)
             
             # 获取当前绝对坐标 (用于保存)
             # 如果驱动读坐标慢，可以用理论坐标代替，这里尝试读硬件

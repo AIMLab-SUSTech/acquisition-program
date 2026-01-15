@@ -406,6 +406,47 @@ class GalaxyCamera(Camera):
             return 8
         except:
             return 8
+    
+    def set_trigger_mode(self, mode):
+        """
+        设置触发模式
+        mode: 'continuous' (连续/内部触发) 或 'software' (软触发)
+        """
+        if self.cam is None: return
+        try:
+            # 必须先停止采集才能改 TriggerMode (部分相机要求)
+            self.cam.stream_off()
+            
+            trigger_mode_feature = self.feature_control.get_enum_feature("TriggerMode")
+            
+            if mode == 'software':
+                # 1. 开启触发模式
+                trigger_mode_feature.set("On")
+                # 2. 设置源为软触发 (Line1是硬触发, Software是软触发)
+                # 注意：USB2.0相机可能不需要设Source或者Source不同，这里按标准GEV/U3V写
+                if self.feature_control.is_implemented("TriggerSource"):
+                    self.feature_control.get_enum_feature("TriggerSource").set("Software")
+                print("Galaxy: 已切换到 [软触发] 模式")
+            else:
+                # 连续模式：关闭触发，相机自动跑
+                trigger_mode_feature.set("Off")
+                print("Galaxy: 已切换到 [连续] 模式")
+                
+            # 改完参数后重新开始流
+            self.cam.stream_on()
+            
+        except Exception as e:
+            print(f"设置触发模式失败: {e}")
+
+    def trigger(self):
+        """发送一次软触发指令"""
+        if self.cam is None: return
+        try:
+            # 发送 TriggerSoftware 命令
+            cmd = self.feature_control.get_command_feature("TriggerSoftware")
+            cmd.send_command()
+        except Exception as e:
+            print(f"软触发指令发送失败: {e}")
 
     def close(self):
         if self.cam is not None:
