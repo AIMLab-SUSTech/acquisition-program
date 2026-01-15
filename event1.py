@@ -208,6 +208,11 @@ class ScanWorker(QThread):
             else:
                 self.log_signal.emit(f"第 {i} 点采集失败: 空图像", "warning")
 
+        if hasattr(self.camera, 'set_trigger_mode'):
+            # 停止实时流，准备精确采集
+            self.camera.set_trigger_mode('continuous')
+            # 给一点时间让相机反应
+            time.sleep(0.1)
         # 循环结束
         self.finished_signal.emit()
 
