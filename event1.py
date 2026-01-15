@@ -1030,6 +1030,10 @@ class LogicWindow(ModernUI):
             crop_params=crop_params_tuple,  # <--- 传入这里
             dark_frame=self.dark_frame
         )
+        self.worker.update_signal.connect(self._update_scan_preview)
+        self.worker.log_signal.connect(self._worker_log)
+        self.worker.finished_signal.connect(self._scan_finished)
+        self.worker.start()
 
     def _worker_log(self, msg, level):
         """
