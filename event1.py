@@ -97,14 +97,55 @@ class ScanWorker(QThread):
     log_signal = pyqtSignal(str, str) # (消息内容, 颜色类型)
     finished_signal = pyqtSignal()
 
-    def __init__(self, camera, motion, scanner, exposure_time_ms, dark_frame=None):
+    def __init__(self, camera, motion, scanner, exposure_time_ms, crop_params, dark_frame=None):
         super().__init__()
         self.camera = camera
         self.motion = motion
         self.scanner = scanner
         self.exposure_s = exposure_time_ms / 1000.0
         self.dark_frame = dark_frame
-        self.is_running = True # 用于中途停止
+        
+        # 解包裁剪参数 (width, height, off_x, off_y)
+        self.target_w, self.target_h, self.off_x, self.off_y = crop_params
+        
+        self.is_running = True
+
+    # 2. 新增一个不依赖 UI 的纯计算裁剪函数
+    def worker_crop(self, full_image):
+        if full_image is None: return None
+        h_full, w_full = full_image.shape
+        
+        # 使用初始化时传进来的 int 变量，而不是读取 UI
+        target_w = self.target_w
+        target_h = self.target_h
+        off_x = self.off_x
+        off_y = self.off_y
+
+        if target_w >= w_full and target_h >= h_full:
+            return full_image
+
+        center_x = w_full // 2 + off_x
+        center_y = h_full // 2 + off_y
+        
+        x1 = int(center_x - target_w // 2)
+        y1 = int(center_y - target_h // 2)
+        x2 = x1 + target_w
+        y2 = y1 + target_h
+        
+        # 边界检查
+        if x1 < 0: 
+            x1 = 0; x2 = target_w
+        if y1 < 0:
+            y1 = 0; y2 = target_h
+        if x2 > w_full:
+            x2 = w_full; x1 = w_full - target_w
+        if y2 > h_full:
+            y2 = h_full; y1 = h_full - target_h
+            
+        x1 = max(0, x1); y1 = max(0, y1)
+        x2 = min(w_full, x2); y2 = min(h_full, y2)
+        
+        return full_image[y1:y2, x1:x2]
 
     def run(self):
         total = len(self.scanner.x)
@@ -138,7 +179,7 @@ class ScanWorker(QThread):
 
             # 3. 读取图像
             raw_img = self.camera.read_newest_image()
-            raw_img = crop_image(raw_img)
+            raw_img = self.worker_crop(raw_img)
             
             # 获取当前绝对坐标 (用于保存)
             # 如果驱动读坐标慢，可以用理论坐标代替，这里尝试读硬件
@@ -940,6 +981,8 @@ class LogicWindow(ModernUI):
                 self.dark_frame = self.camera.read_newest_image()
                 self.dark_frame = self.crop_image(np.float32(self.dark_frame))
                 self.log_success("暗场采集完成")
+                path_dark = os.path.join(self.save_dir, f"dark.tif")
+                Image.fromarray(self.dark_frame).save(path_dark)
             else:
                 self.log_info("采集已取消")
                 return
@@ -963,17 +1006,30 @@ class LogicWindow(ModernUI):
         self.log_info(f"开始采集 {len(self.scanner.x)} 点... 数据将暂存内存")
 
         exposure_val = self.exposure_spin.value()
+
+        try:
+            w = int(self.roi_w.text())
+            h = int(self.roi_h.text())
+        except:
+            w, h = 1024, 1024
+        
+        try:
+            ox = int(self.off_x.text())
+            oy = int(self.off_y.text())
+        except:
+            ox, oy = 0, 0
+            
+        crop_params_tuple = (w, h, ox, oy) # 打包成元组
+
+        # === 【修改】 实例化 Worker 时传入参数 ===
         self.worker = ScanWorker(
             camera=self.camera,
             motion=self.motion,
             scanner=self.scanner,
             exposure_time_ms=exposure_val,
+            crop_params=crop_params_tuple,  # <--- 传入这里
             dark_frame=self.dark_frame
         )
-        self.worker.update_signal.connect(self._update_scan_preview)
-        self.worker.log_signal.connect(self._worker_log)
-        self.worker.finished_signal.connect(self._scan_finished)
-        self.worker.start()
 
     def _worker_log(self, msg, level):
         """
@@ -1025,6 +1081,7 @@ class LogicWindow(ModernUI):
     def _scan_finished(self):
         self.log_info("扫描线程结束，正在写入 H5...")
         
+        self.dark_frame = None
         # 写入 H5
         self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
         self.log_success("H5 文件写入完成！")
@@ -1145,7 +1202,7 @@ class LogicWindow(ModernUI):
                 os.makedirs(self.save_dir)
             
             path_tif = os.path.join(self.save_dir, f"{base_name}.tif")
-            
+
             try:
                 Image.fromarray(roi_img).save(path_tif)
                 self.log_info(f"图片已保存: {base_name}.tif")
