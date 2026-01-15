@@ -70,62 +70,84 @@ class xps(MotionController):
         self.timeout = 10
         
         try:
-            from newportxps.XPS_C8_drivers import XPS
-            self._xps = XPS()
-            # 直接通过 TCP 连接到服务器，绕过 SFTP
-            self._sid = self._xps.TCP_ConnectToServer(self.host, self.port, self.timeout)
-            if self._sid < 0:
-                print(f"XPS 连接失败: 无效的 socket ID {self._sid}")
-                self._sid = None
-            else:
-                try:
-                    err, msg = self._xps.Login(self._sid, self.username, self.password)
-                    if err != 0:
-                        print(f"XPS 登录失败: 错误码 {err}, {msg}")
-                        self._sid = None
-                    else:
-                        print(f"XPS: 已连接到 {IP}")
-                except Exception as e:
-                    print(f"XPS 登录失败: {e}")
-                    self._sid = None
+            from newportxps import NewportXPS
+            # 注意: 用户名密码通常是 Administrator
+            self.xps = NewportXPS(IP, username='Administrator', password='Administrator')
+            print(f"XPS: 已连接到 {IP}")
         except Exception as e:
-            print(f'XPS 连接失败: {e}')
-            self._xps = None
-            self._sid = None
+            print(f'XPS 初始化失败: {e}\n 尝试直接连接...')
+            try:
+                from newportxps.XPS_C8_drivers import XPS
+                self._xps = XPS()
+                # 直接通过 TCP 连接到服务器，绕过 SFTP
+                self._sid = self._xps.TCP_ConnectToServer(self.host, self.port, self.timeout)
+                if self._sid < 0:
+                    print(f"XPS 连接失败: 无效的 socket ID {self._sid}")
+                    self._sid = None
+                else:
+                    try:
+                        err, msg = self._xps.Login(self._sid, self.username, self.password)
+                        if err != 0:
+                            print(f"XPS 登录失败: 错误码 {err}, {msg}")
+                            self._sid = None
+                        else:
+                            print(f"XPS: 已连接到 {IP}")
+                    except Exception as e:
+                        print(f"XPS 登录失败: {e}")
+                        self._sid = None
+            except Exception as e:
+                print(f'XPS 连接失败: {e}')
+                self._xps = None
+                self._sid = None
 
     def init_groups(self, group_list=[]):
         """初始化轴组"""
-        if not self._xps or self._sid is None:
-            return
-        
+        """初始化轴组，Axis 0 对应 list[0], Axis 1 对应 list[1]"""
+        if not self.xps: return
         self.groups = []
-        
-        # 直接添加用户指定的轴组，不依赖于 system.ini
+        status = self.xps.get_group_status()
         for g in group_list:
-            self.groups.append(g)
-            print(f"已手动加载轴组: {g}")
+            # 2. 判断是否已经 Ready 
+            if status.get(g, '').startswith('Ready'):
+                print(f"轴组 {g} 已经是 Ready 状态，跳过初始化，保持当前位置。")
+                self.groups.append(g)
             
-            # 尝试初始化轴组
-            print(f"尝试初始化轴组 {g}...")
-            try:
-                # 1. 先 Kill 轴组
-                kill_result = self._xps.GroupKill(self._sid, g)
-                if kill_result[0] != 0:
-                    print(f"XPS Kill 轴组 {g} 失败: 错误码 {kill_result[0]}, {kill_result[1]}")
-                
-                # 2. 初始化轴组
-                init_result = self._xps.GroupInitialize(self._sid, g)
-                if init_result[0] != 0:
-                    print(f"XPS 初始化轴组 {g} 失败: 错误码 {init_result[0]}, {init_result[1]}")
-                
-                # 3. 执行 Home Search
-                home_result = self._xps.GroupHomeSearch(self._sid, g)
-                if home_result[0] != 0:
-                    print(f"XPS Home Search 轴组 {g} 失败: 错误码 {home_result[0]}, {home_result[1]}")
-                
-                print(f"XPS 轴组 {g} 初始化完成")
-            except Exception as e:
-                print(f"XPS 轴组 {g} 初始化失败: {e}")
+            # 3. 如果没 Ready，再执行那一套繁琐的流程
+            else:
+                print(f"轴组 {g} 未就绪 (状态: {status.get(g, '')})，开始初始化...")
+                try:
+                    self.xps.initialize_group(g) # 再初始化
+                    self.xps.home_group(g)
+                    self.groups.append(g)
+                    print(f"XPS: {g} 初始化完成")
+                except Exception as e:
+                    print(f"XPS: {g} 初始化失败: {e},手动设置")
+                    # 直接添加用户指定的轴组，不依赖于 system.ini
+                    for g in group_list:
+                        self.groups.append(g)
+                        print(f"已手动加载轴组: {g}")
+                        
+                        # 尝试初始化轴组
+                        print(f"尝试初始化轴组 {g}...")
+                        try:
+                            # 1. 先 Kill 轴组
+                            kill_result = self._xps.GroupKill(self._sid, g)
+                            if kill_result[0] != 0:
+                                print(f"XPS Kill 轴组 {g} 失败: 错误码 {kill_result[0]}, {kill_result[1]}")
+                            
+                            # 2. 初始化轴组
+                            init_result = self._xps.GroupInitialize(self._sid, g)
+                            if init_result[0] != 0:
+                                print(f"XPS 初始化轴组 {g} 失败: 错误码 {init_result[0]}, {init_result[1]}")
+                            
+                            # 3. 执行 Home Search
+                            home_result = self._xps.GroupHomeSearch(self._sid, g)
+                            if home_result[0] != 0:
+                                print(f"XPS Home Search 轴组 {g} 失败: 错误码 {home_result[0]}, {home_result[1]}")
+                            
+                            print(f"XPS 轴组 {g} 初始化完成")
+                        except Exception as e:
+                            print(f"XPS 轴组 {g} 初始化失败: {e}")
 
     def move_by(self, distance, axis):
         """相对移动：通过计算绝对坐标实现"""
