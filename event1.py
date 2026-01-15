@@ -132,10 +132,20 @@ class ScanWorker(QThread):
 
             # 2. 【核心修复】强制等待曝光
             # 既然是同步采集，必须确保相机有足够时间曝光
-            # 如果是软触发模式，这里应该 call trigger()
-            # 如果是连续模式，sleep 等待这一帧刷过去
             time.sleep(self.exposure_s + 0.05) # 多给 50ms 缓冲
 
+            try:
+                # 这是一个简单的清空策略：尝试多读一次并丢弃
+                if hasattr(self.camera, 'clear_buffer'):
+                    self.camera.clear_buffer()
+                else:
+                    # 如果没有专用清空函数，就手动“读废”一张
+                    _ = self.camera.read_newest_image()
+            except:
+                pass
+
+            if hasattr(self.camera, 'trigger'):
+                self.camera.trigger()
             # 3. 读取图像
             raw_img = self.camera.read_newest_image()
             
@@ -566,7 +576,7 @@ class LogicWindow(ModernUI):
         if self.camera:
             try:
                 if type(self.camera).__name__ == "NewVSYCamera":
-                    device_instance.start_acquisition()
+                    self.camera.start_acquisition()
 
                 # 1. 获取并裁剪图像
                 img = self.camera.read_newest_image()
@@ -758,7 +768,6 @@ class LogicWindow(ModernUI):
     def _move_logical_delta(self, delta, logical_axis_idx): 
         """
         执行相对移动，并在移动后直接读取硬件位置更新界面。
-        不再使用 target_x.text() + delta 这种不靠谱的字符串加减。
         """
         # 1. 获取轴映射设置
         is_swap = self.stage_widget.check_swap.isChecked()
@@ -800,8 +809,8 @@ class LogicWindow(ModernUI):
             # 尝试调用硬件的绝对移动接口
             # 假设驱动通过 move_to(position, axis) 实现
             # Axis 0 = X, Axis 1 = Y
-            self.motion.move_to(hw_x, axis=0)
-            self.motion.move_to(hw_y, axis=1)
+            self.motion.move_to(0, axis=0)
+            self.motion.move_to(0, axis=1)
             
             # 移动完成后，同步硬件位置显示
             self.sync_hardware_position()
@@ -813,8 +822,8 @@ class LogicWindow(ModernUI):
             try:
                 # 某些驱动可能是 set_position
                 if hasattr(self.motion, 'move_absolute'):
-                    self.motion.move_absolute(hw_x, axis=0)
-                    self.motion.move_absolute(hw_y, axis=1)
+                    self.motion.move_absolute(0, axis=0)
+                    self.motion.move_absolute(0, axis=1)
                     self.sync_hardware_position()
             except Exception as e:
                 self.log_error(f"回零失败: {e}")
@@ -940,6 +949,9 @@ class LogicWindow(ModernUI):
                 self.dark_frame = self.camera.read_newest_image()
                 self.dark_frame = self.crop_image(np.float32(self.dark_frame))
                 self.log_success("暗场采集完成")
+            else:
+                self.log_info("采集已取消")
+                return
         
         if self.dark_frame is not None:
             confirm = QMessageBox.question(
@@ -968,40 +980,65 @@ class LogicWindow(ModernUI):
             dark_frame=self.dark_frame
         )
         self.worker.update_signal.connect(self._update_scan_preview)
-        self.worker.log_signal.connect(self.on_worker_log)
+        self.worker.log_signal.connect(self._worker_log)
         self.worker.finished_signal.connect(self._scan_finished)
         self.worker.start()
 
-    def on_scan_step_received(self, img_data, cur_x, cur_y):
-        """线程每采完一张图，就会调用这个函数"""
-        
-        # 1. 存入内存列表
+    def _worker_log(self, msg, level):
+        """
+        处理子线程发来的日志信号
+        ScanWorker.log_signal -> (msg, level)
+        """
+        if level == "error":
+            self.log_error(msg)
+        elif level == "warning":
+            self.log_warning(msg)
+        elif level == "success":
+            self.log_success(msg)
+        else:
+            self.log_info(msg)
+
+    def _update_scan_preview(self, img_data, cur_x, cur_y, idx):
+        """
+        处理子线程发来的图像更新信号
+        ScanWorker.update_signal -> (img_data, cur_x, cur_y, idx)
+        此函数替代了原本未使用的 on_scan_step_received
+        """
+        # 1. 将数据存入内存列表 (这是最关键的一步，否则最后保存为空)
         self.dp.append(img_data)
         self.pos_x.append(cur_x)
         self.pos_y.append(cur_y)
         
-        # 2. 刷新界面显示 (这里显示的是真实保存的数据！)
-        # 如果是 float 数据(减过暗场)，为了显示需要转回 uint 或者归一化
-        show_img = img_data
-        # if img_data.dtype != np.uint16 and img_data.dtype != np.uint8:
-        #      show_img = np.clip(img_data, 0, 65535).astype(np.uint16)
-             
-        self.image_view.update_image(show_img, self.chk_mask.isChecked())
-            
-        # 4. 可选：实时保存单帧 TIF (方便你看图)
+        # 2. 更新界面图像显示
+        # 检查是否需要显示 Mask (十字准星)
+        show_mask = self.chk_mask.isChecked()
+        
+        # 这里的 img_data 可能是 float (如果减去了暗场)，
+        # update_image 内部有处理 float->uint8 的逻辑，直接传即可
+        self.image_view.update_image(img_data, show_mask=show_mask)
+
+        # 4. (可选) 实时保存单帧 TIF 方便调试
         frame_name = f"scan_{idx:03d}.tif"
         path = os.path.join(self.save_dir, frame_name)
-        Image.fromarray(show_img).save(path)
+        try:
+            # 简单的归一化保存，或者直接保存 raw
+            if img_data.dtype != np.uint8 and img_data.dtype != np.uint16:
+                # 如果是float，简单转为uint16保存，防止报错
+                save_data = img_data.astype(np.uint16)
+            else:
+                save_data = img_data
+            Image.fromarray(save_data).save(path)
+        except Exception as e:
+            print(f"单帧保存失败: {e}")
 
-    def on_scan_finished(self):
-        self.log_success("扫描线程结束，正在写入 H5...")
+    def _scan_finished(self):
+        self.log_info("扫描线程结束，正在写入 H5...")
         
         # 写入 H5
         self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
         self.log_success("H5 文件写入完成！")
         
         # 回到原点 (可选)
-        # 注意：这里是在主线程执行，可以直接调
         final_x = self.scanner.final_pos[0]
         final_y = self.scanner.final_pos[1]
         self._move_logical_delta(-final_x, 0)
