@@ -174,10 +174,7 @@ class ScanWorker(QThread):
                 self.log_signal.emit(f"移动错误: {e}", "error")
                 break
 
-            # 2. 【核心修复】强制等待曝光
-            time.sleep(self.exposure_s + 0.05) # 多给 50ms 缓冲
-
-            # 3. 读取图像
+            # 2. 读取图像
             raw_img = self.camera.read_newest_image()
             raw_img = self.worker_crop(raw_img)
             

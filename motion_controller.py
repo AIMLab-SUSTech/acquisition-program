@@ -77,14 +77,6 @@ class xps(MotionController):
             self.xps = NewportXPS(IP, username=username, password=password)
             print(f"XPS: 已连接到 {IP}")
             
-            # 读取可用的 groups 和 stages
-            if hasattr(self.xps, 'groups') and self.xps.groups:
-                print(f"XPS: 发现 {len(self.xps.groups)} 个轴组: {list(self.xps.groups.keys())}")
-            
-            if hasattr(self.xps, 'stages') and self.xps.stages:
-                self.stages = self.xps.stages
-                print(f"XPS: 发现 {len(self.stages)} 个轴: {list(self.stages.keys())}")
-            
         except Exception as e:
             print(f'XPS 初始化失败: {e}')
             print('尝试使用底层驱动...')
@@ -192,7 +184,6 @@ class xps(MotionController):
             try:
                 # 检查状态
                 status_result = self._xps.GroupStatusGet(self._sid, group_name)
-                
                 # 状态码 10-19: Ready states
                 # 状态码 42-46: Ready from various operations
                 if status_result[0] == 0:
