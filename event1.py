@@ -1,3 +1,4 @@
+from re import S
 import sys
 import os
 import time
@@ -504,7 +505,9 @@ class LogicWindow(ModernUI):
             self.btn_connect_stage.setText("已连接")
             self.log_success("位移台连接成功")
             
-            self.sync_hardware_position() 
+            self.sync_hardware_position()
+            self.zero_stage_x = float(self.stage_widget.target_x.text())
+            self.zero_stage_y = float(self.stage_widget.target_y.text())
         else:
             self.log_error(f"位移台错误: {result}")
 
@@ -779,7 +782,6 @@ class LogicWindow(ModernUI):
             
             else:
                 # 方案 B: 如果只有 move_by，则需要先读取当前位置算差值
-                # (这里保持你原来的逻辑，但加上硬件同步)
                 current_x_str = self.stage_widget.lbl_x.text().split(':')[-1].replace('mm','').strip()
                 current_y_str = self.stage_widget.lbl_y.text().split(':')[-1].replace('mm','').strip()
                 
@@ -838,13 +840,12 @@ class LogicWindow(ModernUI):
             self.log_warning("位移台未连接")
             return
 
-        self.log_info("正在执行回零操作 (Move to Absolute 0)...")
         try:
             # 尝试调用硬件的绝对移动接口
             # 假设驱动通过 move_to(position, axis) 实现
             # Axis 0 = X, Axis 1 = Y
-            self.motion.move_to(0, axis=0)
-            self.motion.move_to(0, axis=1)
+            self.motion.move_to(self.zero_stage_x, axis=0)
+            self.motion.move_to(self.zero_stage_y, axis=1)
             
             # 移动完成后，同步硬件位置显示
             self.sync_hardware_position()

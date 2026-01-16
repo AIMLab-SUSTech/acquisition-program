@@ -107,8 +107,6 @@ class xps(MotionController):
     def init_groups(self, group_list=[]):
         """
         初始化轴组（兼容旧代码）
-        新版本：优先使用高层接口
-        旧版本：回退到底层驱动
         """
         if self.xps is not None:
             # 使用高层接口
