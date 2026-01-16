@@ -147,7 +147,7 @@ class xps(MotionController):
                 # 需要初始化
                 print(f"轴组 {group_name} 未就绪 (状态: {current_status})")
                 try:
-                    # 尝试初始化（不 home）
+                    # 尝试初始化
                     self.xps.initialize_group(group_name)
                     
                     # 检查是否需要 home
@@ -162,10 +162,21 @@ class xps(MotionController):
                         if positioners:
                             stage_name = f"{group_name}.{positioners[0]}"
                             self._stage_to_axis[idx] = stage_name
-                            print(f"  Axis {idx} -> Stage {stage_name}")
                     else:
-                        print(f"轴组 {group_name} 需要 home (状态: {new_status})")
-                        print(f"请手动执行: xps.home_group('{group_name}')")
+                        print(f"轴组 {group_name} 将 home (状态: {new_status})")
+                        self.xps.home_group(group_name)
+
+                        new_status = self.xps.get_group_status().get(group_name, '')
+                        if new_status.startswith('Ready'):
+                            print(f"轴组 {group_name} 初始化成功，无需 home")
+                            self.groups.append(group_name)
+                            
+                            # 映射 axis
+                            group_info = self.xps.groups.get(group_name, {})
+                            positioners = group_info.get('positioners', [])
+                            if positioners:
+                                stage_name = f"{group_name}.{positioners[0]}"
+                                self._stage_to_axis[idx] = stage_name
                         
                 except Exception as e:
                     print(f"轴组 {group_name} 初始化失败: {e}")
