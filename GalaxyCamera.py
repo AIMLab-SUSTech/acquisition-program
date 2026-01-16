@@ -55,7 +55,6 @@ class GalaxyCamera:
             
             # --- 【修正点】移除了 get_device_class 的判断 ---
             # USB 相机不需要设置 GevSCPSPacketSize，直接跳过即可。
-            
             # 准备图像格式转换工具
             self.image_convert = self.dm.create_image_format_convert()
             

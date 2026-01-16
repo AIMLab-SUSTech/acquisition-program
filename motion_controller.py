@@ -57,190 +57,316 @@ class smartact(MotionController):
             self.motion.home(axis=axis)
 
 class xps(MotionController):
+    """
+    适配 newportxps 2025.1.0 版本的 XPS 控制器类
+    主要改进:
+    1. 使用高层 NewportXPS 接口，自动读取 system.ini
+    2. 使用 stages 字典管理轴组，避免手动初始化
+    3. 智能状态检测，只在必要时 home
+    """
     def __init__(self, IP='192.168.0.254', username='Administrator', password='Administrator'):
         super().__init__()
         self.xps = None
         self.groups = []
-        self._xps = None
-        self._sid = None
-        self.host = IP
-        self.username = username
-        self.password = password
-        self.port = 5001
-        self.timeout = 10
+        self.stages = {}  # 存储 stage 信息
+        self._stage_to_axis = {}  # axis index 到 stage name 的映射
         
         try:
             from newportxps import NewportXPS
-            # 注意: 用户名密码通常是 Administrator
-            self.xps = NewportXPS(IP, username='Administrator', password='Administrator')
+            # 新版本会自动读取控制器上的 system.ini
+            self.xps = NewportXPS(IP, username=username, password=password)
             print(f"XPS: 已连接到 {IP}")
+            
+            # 读取可用的 groups 和 stages
+            if hasattr(self.xps, 'groups') and self.xps.groups:
+                print(f"XPS: 发现 {len(self.xps.groups)} 个轴组: {list(self.xps.groups.keys())}")
+            
+            if hasattr(self.xps, 'stages') and self.xps.stages:
+                self.stages = self.xps.stages
+                print(f"XPS: 发现 {len(self.stages)} 个轴: {list(self.stages.keys())}")
+            
         except Exception as e:
-            print(f'XPS 初始化失败: {e}\n 尝试直接连接...')
-            try:
-                from newportxps.XPS_C8_drivers import XPS
-                self._xps = XPS()
-                # 直接通过 TCP 连接到服务器，绕过 SFTP
-                self._sid = self._xps.TCP_ConnectToServer(self.host, self.port, self.timeout)
-                if self._sid < 0:
-                    print(f"XPS 连接失败: 无效的 socket ID {self._sid}")
+            print(f'XPS 初始化失败: {e}')
+            print('尝试使用底层驱动...')
+            self._init_lowlevel(IP, username, password)
+
+    def _init_lowlevel(self, IP, username, password):
+        """备用方案：使用底层驱动"""
+        try:
+            from newportxps.XPS_C8_drivers import XPS
+            self._xps = XPS()
+            self._sid = self._xps.TCP_ConnectToServer(IP, 5001, 10)
+            
+            if self._sid < 0:
+                print(f"XPS 连接失败: 无效的 socket ID {self._sid}")
+                self._sid = None
+            else:
+                err, msg = self._xps.Login(self._sid, username, password)
+                if err != 0:
+                    print(f"XPS 登录失败: 错误码 {err}, {msg}")
                     self._sid = None
                 else:
-                    try:
-                        err, msg = self._xps.Login(self._sid, self.username, self.password)
-                        if err != 0:
-                            print(f"XPS 登录失败: 错误码 {err}, {msg}")
-                            self._sid = None
-                        else:
-                            print(f"XPS: 已连接到 {IP}")
-                    except Exception as e:
-                        print(f"XPS 登录失败: {e}")
-                        self._sid = None
-            except Exception as e:
-                print(f'XPS 连接失败: {e}')
-                self._xps = None
-                self._sid = None
+                    print(f"XPS: 已通过底层驱动连接到 {IP}")
+        except Exception as e:
+            print(f'底层驱动初始化失败: {e}')
+            self._xps = None
+            self._sid = None
 
     def init_groups(self, group_list=[]):
-        """初始化轴组"""
-        """初始化轴组，Axis 0 对应 list[0], Axis 1 对应 list[1]"""
-        if not self.xps: return
+        """
+        初始化轴组（兼容旧代码）
+        新版本：优先使用高层接口
+        旧版本：回退到底层驱动
+        """
+        if self.xps is not None:
+            # 使用高层接口
+            self._init_groups_highlevel(group_list)
+        else:
+            # 使用底层驱动
+            self._init_groups_lowlevel(group_list)
+
+    def _init_groups_highlevel(self, group_list):
+        """使用高层 NewportXPS 接口初始化"""
         self.groups = []
+        self._stage_to_axis = {}
+        
+        # 获取当前轴组状态
         status = self.xps.get_group_status()
-        for g in group_list:
-            # 2. 判断是否已经 Ready 
-            if status.get(g, '').startswith('Ready'):
-                print(f"轴组 {g} 已经是 Ready 状态，跳过初始化，保持当前位置。")
-                self.groups.append(g)
+        
+        for idx, group_name in enumerate(group_list):
+            if group_name not in self.xps.groups:
+                print(f"警告: 轴组 {group_name} 不在配置中")
+                continue
             
-            # 3. 如果没 Ready，再执行那一套繁琐的流程
+            # 检查状态
+            current_status = status.get(group_name, '')
+            
+            # 如果已经 Ready，直接使用
+            if current_status.startswith('Ready'):
+                print(f"轴组 {group_name} 已就绪 (状态: {current_status})，保持当前位置")
+                self.groups.append(group_name)
+                
+                # 映射 axis 到对应的 stage
+                group_info = self.xps.groups.get(group_name, {})
+                positioners = group_info.get('positioners', [])
+                if positioners:
+                    stage_name = f"{group_name}.{positioners[0]}"
+                    self._stage_to_axis[idx] = stage_name
+                    print(f"  Axis {idx} -> Stage {stage_name}")
             else:
-                print(f"轴组 {g} 未就绪 (状态: {status.get(g, '')})，开始初始化...")
+                # 需要初始化
+                print(f"轴组 {group_name} 未就绪 (状态: {current_status})")
                 try:
-                    self.xps.initialize_group(g) # 再初始化
-                    self.xps.home_group(g)
-                    self.groups.append(g)
-                    print(f"XPS: {g} 初始化完成")
-                except Exception as e:
-                    print(f"XPS: {g} 初始化失败: {e},手动设置")
-                    # 直接添加用户指定的轴组，不依赖于 system.ini
-                    for g in group_list:
-                        self.groups.append(g)
-                        print(f"已手动加载轴组: {g}")
+                    # 尝试初始化（不 home）
+                    self.xps.initialize_group(group_name)
+                    
+                    # 检查是否需要 home
+                    new_status = self.xps.get_group_status().get(group_name, '')
+                    if new_status.startswith('Ready'):
+                        print(f"轴组 {group_name} 初始化成功，无需 home")
+                        self.groups.append(group_name)
                         
-                        # 尝试初始化轴组
-                        print(f"尝试初始化轴组 {g}...")
-                        try:
-                            # 1. 先 Kill 轴组
-                            kill_result = self._xps.GroupKill(self._sid, g)
-                            if kill_result[0] != 0:
-                                print(f"XPS Kill 轴组 {g} 失败: 错误码 {kill_result[0]}, {kill_result[1]}")
-                            
-                            # 2. 初始化轴组
-                            init_result = self._xps.GroupInitialize(self._sid, g)
-                            if init_result[0] != 0:
-                                print(f"XPS 初始化轴组 {g} 失败: 错误码 {init_result[0]}, {init_result[1]}")
-                            
-                            # 3. 执行 Home Search
-                            home_result = self._xps.GroupHomeSearch(self._sid, g)
-                            if home_result[0] != 0:
-                                print(f"XPS Home Search 轴组 {g} 失败: 错误码 {home_result[0]}, {home_result[1]}")
-                            
-                            print(f"XPS 轴组 {g} 初始化完成")
-                        except Exception as e:
-                            print(f"XPS 轴组 {g} 初始化失败: {e}")
+                        # 映射 axis
+                        group_info = self.xps.groups.get(group_name, {})
+                        positioners = group_info.get('positioners', [])
+                        if positioners:
+                            stage_name = f"{group_name}.{positioners[0]}"
+                            self._stage_to_axis[idx] = stage_name
+                            print(f"  Axis {idx} -> Stage {stage_name}")
+                    else:
+                        print(f"轴组 {group_name} 需要 home (状态: {new_status})")
+                        print(f"请手动执行: xps.home_group('{group_name}')")
+                        
+                except Exception as e:
+                    print(f"轴组 {group_name} 初始化失败: {e}")
+
+    def _init_groups_lowlevel(self, group_list):
+        """使用底层驱动初始化（原有逻辑的改进版）"""
+        if not hasattr(self, '_xps') or self._sid is None:
+            print("底层驱动未初始化")
+            return
+        
+        self.groups = []
+        
+        for group_name in group_list:
+            try:
+                # 检查状态
+                status_result = self._xps.GroupStatusGet(self._sid, group_name)
+                
+                # 状态码 10-19: Ready states
+                # 状态码 42-46: Ready from various operations
+                if status_result[0] == 0:
+                    status_code = status_result[1]
+                    
+                    if (10 <= status_code < 20) or (42 <= status_code <= 46):
+                        print(f"轴组 {group_name} 已就绪 (状态码: {status_code})，保持位置")
+                        self.groups.append(group_name)
+                        continue
+                
+                # 需要初始化
+                print(f"轴组 {group_name} 需要初始化 (状态码: {status_result[1] if status_result[0] == 0 else 'unknown'})")
+                
+                # Kill -> Initialize (不 home)
+                self._xps.GroupKill(self._sid, group_name)
+                init_result = self._xps.GroupInitialize(self._sid, group_name)
+                
+                if init_result[0] == 0:
+                    # 再次检查状态
+                    status_result = self._xps.GroupStatusGet(self._sid, group_name)
+                    if status_result[0] == 0 and 10 <= status_result[1] < 50:
+                        print(f"轴组 {group_name} 初始化成功，跳过 home")
+                        self.groups.append(group_name)
+                    else:
+                        print(f"轴组 {group_name} 初始化后需要 home (状态: {status_result[1]})")
+                        print(f"如需 home，请手动调用底层命令")
+                else:
+                    print(f"轴组 {group_name} 初始化失败: {init_result}")
+                    
+            except Exception as e:
+                print(f"处理轴组 {group_name} 时出错: {e}")
 
     def move_by(self, distance, axis):
-        """相对移动：通过计算绝对坐标实现"""
+        """相对移动"""
+        if self.xps is not None:
+            # 使用高层接口
+            stage_name = self._stage_to_axis.get(axis)
+            if stage_name:
+                try:
+                    current_pos = self.xps.get_stage_position(stage_name)
+                    target_pos = current_pos + distance
+                    self.xps.move_stage(stage_name, target_pos)
+                except Exception as e:
+                    print(f"XPS 移动失败 (Axis {axis}, Stage {stage_name}): {e}")
+            else:
+                print(f"Axis {axis} 未映射到 stage")
+        else:
+            # 使用底层驱动（原有逻辑）
+            self._move_by_lowlevel(distance, axis)
+
+    def _move_by_lowlevel(self, distance, axis):
+        """底层驱动的相对移动"""
         if axis < 0 or axis >= len(self.groups):
             return
         
         group_name = self.groups[axis]
-        if not self._xps or self._sid is None:
+        if not hasattr(self, '_xps') or self._sid is None:
             return
         
         try:
-            # 1. 检查轴组状态
-            status_result = self._xps.GroupStatusGet(self._sid, group_name)
-            if status_result[0] != 0:
-                print(f"XPS 获取组状态失败 (Axis {axis}): 错误码 {status_result[0]}")
-                # 尝试初始化轴组
-                print(f"尝试初始化轴组 {group_name}...")
-                self._xps.GroupKill(self._sid, group_name)
-                self._xps.GroupInitialize(self._sid, group_name)
-                self._xps.GroupHomeSearch(self._sid, group_name)
-            
-            # 2. 获取当前位置（假设每个组只有一个 positioner）
+            # 获取当前位置
             pos_result = self._xps.GroupPositionCurrentGet(self._sid, group_name, 1)
-            if pos_result[0] != 0:
-                print(f"XPS 获取位置失败 (Axis {axis}): 错误码 {pos_result[0]}")
+            if pos_result[0] != 0 or len(pos_result) < 2 or pos_result[1] is None:
+                print(f"XPS 无法获取位置 (Axis {axis})")
                 return
-            # 3. 检查当前位置是否为 None 或空列表
-            if len(pos_result) < 2 or pos_result[1] is None:
-                print(f"XPS: 无法获取 {group_name} 的当前位置，跳过移动")
-                return
+            
             current_pos = pos_result[1]
-            # 4. 计算目标位置
             target_pos = current_pos + distance
-            # 5. 执行移动
+            
+            # 执行移动
             move_result = self._xps.GroupMoveAbsolute(self._sid, group_name, [target_pos])
             if move_result[0] != 0:
-                print(f"XPS 移动失败 (Axis {axis}): 错误码 {move_result[0]}, {move_result[1]}")
+                print(f"XPS 移动失败 (Axis {axis}): 错误码 {move_result[0]}")
         except Exception as e:
             print(f"XPS 相对移动失败 (Axis {axis}): {e}")
 
     def move_to(self, position, axis):
         """绝对移动"""
+        if self.xps is not None:
+            # 使用高层接口
+            stage_name = self._stage_to_axis.get(axis)
+            if stage_name:
+                try:
+                    self.xps.move_stage(stage_name, position)
+                except Exception as e:
+                    print(f"XPS 移动失败 (Axis {axis}, Stage {stage_name}): {e}")
+            else:
+                print(f"Axis {axis} 未映射到 stage")
+        else:
+            # 使用底层驱动（原有逻辑）
+            self._move_to_lowlevel(position, axis)
+
+    def _move_to_lowlevel(self, position, axis):
+        """底层驱动的绝对移动"""
         if axis < 0 or axis >= len(self.groups):
             return
         
         group_name = self.groups[axis]
-        if not self._xps or self._sid is None:
+        if not hasattr(self, '_xps') or self._sid is None:
             return
         
         try:
             move_result = self._xps.GroupMoveAbsolute(self._sid, group_name, [position])
             if move_result[0] != 0:
-                print(f"XPS 移动失败 (Axis {axis}): 错误码 {move_result[0]}, {move_result[1]}")
+                print(f"XPS 移动失败 (Axis {axis}): 错误码 {move_result[0]}")
         except Exception as e:
             print(f"XPS 绝对移动失败 (Axis {axis}): {e}")
 
     def get_position(self, axis):
         """获取当前位置"""
+        if self.xps is not None:
+            # 使用高层接口
+            stage_name = self._stage_to_axis.get(axis)
+            if stage_name:
+                try:
+                    return self.xps.get_stage_position(stage_name)
+                except Exception as e:
+                    print(f"XPS 读取位置失败 (Axis {axis}, Stage {stage_name}): {e}")
+                    return 0.0
+            else:
+                print(f"Axis {axis} 未映射到 stage")
+                return 0.0
+        else:
+            # 使用底层驱动
+            return self._get_position_lowlevel(axis)
+
+    def _get_position_lowlevel(self, axis):
+        """底层驱动获取位置"""
         if axis < 0 or axis >= len(self.groups):
             return 0.0
         
         group_name = self.groups[axis]
-        if not self._xps or self._sid is None:
+        if not hasattr(self, '_xps') or self._sid is None:
             return 0.0
         
         try:
             pos_result = self._xps.GroupPositionCurrentGet(self._sid, group_name, 1)
-            if pos_result[0] != 0:
-                print(f"XPS 读取位置失败 (Axis {axis}): 错误码 {pos_result[0]}")
-                return 0.0
-            # 检查返回值是否为 None 或空列表
-            if len(pos_result) < 2 or pos_result[1] is None:
-                print(f"XPS: {group_name} 位置为 None，返回默认值 0.0")
+            if pos_result[0] != 0 or len(pos_result) < 2 or pos_result[1] is None:
                 return 0.0
             return pos_result[1]
         except Exception as e:
             print(f"XPS 读取位置失败 (Axis {axis}): {e}")
-        return 0.0
+            return 0.0
 
     def status_report(self):
         """返回状态报告"""
-        if not self._xps or self._sid is None:
+        if self.xps is not None:
+            # 使用高层接口
+            try:
+                report = self.xps.status_report()
+                return {
+                    "report": report,
+                    "groups": self.groups,
+                    "stages": list(self._stage_to_axis.values())
+                }
+            except Exception as e:
+                print(f"获取状态报告失败: {e}")
+                return {"groups": self.groups}
+        else:
+            # 使用底层驱动（原有逻辑）
+            return self._status_report_lowlevel()
+
+    def _status_report_lowlevel(self):
+        """底层驱动状态报告"""
+        if not hasattr(self, '_xps') or self._sid is None:
             return {}
         
         try:
             err, uptime = self._xps.ElapsedTimeGet(self._sid)
             if err != 0:
-                print(f"获取运行时间失败: 错误码 {err}")
                 uptime = 0
             
             err, firmware = self._xps.FirmwareVersionGet(self._sid)
             if err != 0:
-                print(f"获取固件版本失败: 错误码 {err}")
                 firmware = "Unknown"
             
             return {
@@ -252,16 +378,25 @@ class xps(MotionController):
             print(f"获取状态报告失败: {e}")
             return {}
 
-    def set_velocity(self, stage: str = None, velocity: int = 2.5, acceleration: int = None, min_jerktime: int = None,
-                     max_jerktime: int = None):
-        self.xps.set_velocity(stage, velocity, acceleration, min_jerktime, max_jerktime)
+    def set_velocity(self, stage: str = None, velocity: float = 2.5, 
+                     acceleration: float = None, min_jerktime: float = None,
+                     max_jerktime: float = None):
+        """设置速度参数"""
+        if self.xps is not None and hasattr(self.xps, 'set_velocity'):
+            try:
+                self.xps.set_velocity(stage, velocity, acceleration, 
+                                     min_jerktime, max_jerktime)
+            except Exception as e:
+                print(f"设置速度失败: {e}")
+        else:
+            print("set_velocity 仅在高层接口中可用")
 
+            return {}
 
 import ctypes
 from ctypes import create_string_buffer, c_uint
 
-
-class nators(MotionController):
+class nators():
     def __init__(self):
         super().__init__()
         dll_path = 'C:/Windows/System32/NTControl.dll'

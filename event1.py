@@ -1092,14 +1092,8 @@ class LogicWindow(ModernUI):
         
         self.dark_frame = None
 
-        # 写入H5前，先将坐标居中
-        center_x = (max(self.pos_x) + min(self.pos_x)) / 2
-        center_y = (max(self.pos_y) + min(self.pos_y)) / 2
-        pos_x_centered = [x - center_x for x in self.pos_x]
-        pos_y_centered = [y - center_y for y in self.pos_y]
-
         # 写入 H5
-        self._write_scan_to_h5(self.dp, pos_x_centered, pos_y_centered)
+        self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
         self.log_success("H5 文件写入完成！")
         
         # 回到原点 (可选)
@@ -1113,7 +1107,7 @@ class LogicWindow(ModernUI):
         将当前扫描数据写入 H5 文件。(dp, pos_x, pos_y, wl)
         """
         if not h5_path:
-            h5_path = os.path.join(self.save_dir, self.current_scan_h5_name)
+            h5_path = os.path.join(self.save_dir, "raw_data", self.current_scan_h5_name)
         
         try:  
                 # --- 将 Data 写入 H5 ---
@@ -1172,7 +1166,7 @@ class LogicWindow(ModernUI):
         if ok and filename.strip():
             final_name = filename.strip()
             
-            # 1. 调用通用函数保存 PNG，并获取数据 (save_current_frame只负责PNG和返回数据)
+            # 1. 调用通用函数保存 PNG，并获取数据 (save_current_frame只负责保存TIF和返回数据)
             img_data = self.save_current_frame(base_name=final_name)
             
             if img_data is None:
@@ -1208,7 +1202,7 @@ class LogicWindow(ModernUI):
             except:
                 cur_x, cur_y = 0.0, 0.0
 
-            # 2. 准备路径并保存 PNG
+            # 2. 准备路径并保存 TIF
             if not base_name:
                 base_name = f"capture_{int(time.time())}"
             # 确保没有后缀

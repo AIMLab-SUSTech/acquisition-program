@@ -110,34 +110,66 @@ class Scanner:
                         pos_absolute.append((x, y))
                     
         elif self.mode == 'rectangle':
-            # === 矩形模式 (蛇形扫描) ===
-            # 1. 计算 X/Y 方向需要的点数 (向上取整)
-            # 例如: range=0.5, step=0.1 -> 5点; range=0.55, step=0.1 -> 6点
-            # 修正：之前 x/y 对应的 range 可能反了，这里明确 nx 对应 range_x
+            # === 矩形模式 (从中心开始的回字扫描) ===
             nx = int(math.ceil(self.scan_range_x / self.step))
             ny = int(math.ceil(self.scan_range_y / self.step))
             
-            # 确保至少扫描 1 个点
             nx = max(1, nx)
             ny = max(1, ny)
             
-            pos_absolute = []
+            # 计算中心索引（取整，确保是整数网格坐标）
+            center_x = nx // 2
+            center_y = ny // 2
             
-            for i in range(ny):      # 外层循环：Y轴 (行)
-                for j in range(nx):  # 内层循环：X轴 (列)
-                    
-                    # --- 蛇形逻辑 ---
-                    # 偶数行 (0, 2, ...): 从左到右 (X 从 0 增加到 nx-1)
-                    # 奇数行 (1, 3, ...): 从右到左 (X 从 nx-1 减小到 0)
-                    if i % 2 == 0:
-                        grid_x = j
-                    else:
-                        grid_x = (nx - 1) - j
-                    
-                    # 计算物理坐标
-                    x = grid_x * self.step
-                    y = i * self.step
-                    
+            pos_absolute = []
+            x_offset = (nx - 1) * self.step / 2.0
+            y_offset = (ny - 1) * self.step / 2.0
+            
+            # 从中心开始向外，一圈一圈扫描
+            max_radius = max(center_x, center_y, nx - center_x - 1, ny - center_y - 1)
+            
+            for r in range(max_radius + 1):
+                # 当前圈的边界
+                left = center_x - r
+                right = center_x + r
+                top = center_y - r
+                bottom = center_y + r
+                
+                # 生成当前圈的所有点（按顺时针方向）
+                current_ring = []
+                
+                # 上边（从左到右）
+                if top >= 0 and top < ny:
+                    for x in range(left, right + 1):
+                        if 0 <= x < nx:
+                            current_ring.append((top, x))
+                
+                # 右边（从上到下，跳过右上角）
+                if right >= 0 and right < nx:
+                    for y in range(top + 1, bottom + 1):
+                        if 0 <= y < ny:
+                            current_ring.append((y, right))
+                
+                # 下边（从右到左，跳过右下角）
+                if bottom >= 0 and bottom < ny and r > 0:
+                    for x in range(right - 1, left - 1, -1):
+                        if 0 <= x < nx:
+                            current_ring.append((bottom, x))
+                
+                # 左边（从下到上，跳过左下角和左上角）
+                if left >= 0 and left < nx and r > 0:
+                    for y in range(bottom - 1, top, -1):
+                        if 0 <= y < ny:
+                            current_ring.append((y, left))
+                
+                # 蛇形处理：奇数圈反向扫描
+                if r % 2 == 1:
+                    current_ring.reverse()
+                
+                # 转换为物理坐标
+                for y_idx, x_idx in current_ring:
+                    x = x_idx * self.step - x_offset
+                    y = y_idx * self.step - y_offset
                     pos_absolute.append((x, y))
                     
         elif self.mode == 'fermat':
@@ -261,7 +293,8 @@ class Scanner:
         # 创建Scanner对象
         scanner = cls(
             step=scan_data['step'],
-            scan_num=scan_data['scan_num'],
+            scan_range_x=scan_data['scan_range_x'],
+            scan_range_y=scan_data['scan_range_y'],
             mode=scan_data['mode'],
             nth=scan_data['nth'],
             random_offset=scan_data['random_offset'],
@@ -338,7 +371,7 @@ def visualize_scan_path(scanner:Scanner, save_path=None, dpi=100):
 
     # 设置标题
     title = f"{scanner.mode.capitalize()} Scan Path\n"
-    title += f"Step: {scanner.step}, Steps: {scanner.scan_num}"
+    title += f"Step: {scanner.step}, Steps: {scanner.scan_range_x} x {scanner.scan_range_y}"
     if scanner.mode == 'round' and hasattr(scanner, 'nth'):
         title += f", Nth: {scanner.nth}"
     plt.title(title)
@@ -355,7 +388,7 @@ def visualize_scan_path(scanner:Scanner, save_path=None, dpi=100):
 
 if __name__ == '__main__':
     # scanner = Scanner(0.3, 5, nth=6,mode='rectangle', random_offset=True, offset_ratio=0.1)
-    scanner = Scanner(0.3, 5, nth=6,mode='rectangle')
+    scanner = Scanner(1, 8, 5,mode='rectangle')
     # mat_struct = {
     #     # 'sz_fft': np.int32(params.sz_fft),
     #     # 'wavelength': np.float64(params.wavelength),

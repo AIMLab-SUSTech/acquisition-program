@@ -292,7 +292,6 @@ class GalaxyCamera(Camera):
             # 只有当路径不在系统路径里时才添加，防止重复添加
             if lib_path not in sys.path:
                 sys.path.append(lib_path)
-                # print(f"已添加库路径: {lib_path}")  # 调试用，确认路径对不对
                 
             import gxipy as gx
             from gxipy import gxidef  # 显式导入 gxidef 模块
