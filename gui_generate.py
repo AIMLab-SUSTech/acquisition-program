@@ -181,7 +181,7 @@ class ModernUI(QMainWindow):
         
         device_layout.addWidget(QLabel("相机:"), 0, 0)
         self.combo_camera = QComboBox()
-        self.combo_camera.addItems(["IDS", "Ham", "Lucid", "PM", "IDS_Peak","PI-mte3","VSY","Galaxy"])
+        self.combo_camera.addItems(["IDS", "Ham", "Lucid", "PM", "IDS_Peak","PI-mte3","VSY","Galaxy","QHY"])
         self.setup_combo_centered(self.combo_camera)
         device_layout.addWidget(self.combo_camera, 0, 1)
         

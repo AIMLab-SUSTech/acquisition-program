@@ -62,9 +62,15 @@ class DeviceLoader(QThread):
                         from new_vsy_camera import NewVSYCamera                     
                         device_instance = NewVSYCamera()
                     case "Galaxy":
-                        from GalaxyCamera  import GalaxyCamera                        
+                        from camera import GalaxyCamera                        
                         device_instance = GalaxyCamera()
                         device_instance.start_acquisition()
+                    case "QHY":
+                        from QHY import QHYCamera
+                        device_instance = QHYCamera()
+                        device_instance.set_bit_depth(16)
+                        device_instance.start_acquisition()
+                        
 
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -356,6 +362,7 @@ class LogicWindow(ModernUI):
         self.default_save_dir = "please change this to your own path"
         self.dark_frame = None
         self.save_dir = self.default_save_dir
+        self.pixel_size = 3.45e-3
 
         # --- 3. 信号绑定 ---
         self.btn_open_cam.clicked.connect(self.start_init_camera)
@@ -1106,12 +1113,14 @@ class LogicWindow(ModernUI):
         """
         if not h5_path:
             h5_path = os.path.join(self.save_dir, "raw_data", self.current_scan_h5_name)
+        try:
+            os.makedirs(os.path.dirname(h5_path), exist_ok=True)
+        except:
+            pass
         
         try:  
                 # --- 将 Data 写入 H5 ---
             dp_arr = np.array(dp)       
-            pos_x_arr = np.array(pos_x)
-            pos_y_arr = np.array(pos_y)
 
             with h5py.File(h5_path, 'w') as f:            
                 # 1. 写入图像数据
@@ -1120,15 +1129,29 @@ class LogicWindow(ModernUI):
                     data=dp_arr,        # 使用转换后的 numpy 数组
                     compression="gzip"  # 只有 numpy 数组才能支持压缩
                 )             
-                # 2. 写入坐标数据
-                f.create_dataset("x", data=pos_x_arr) # 使用转换后的 numpy 数组
-                f.create_dataset("y", data=pos_y_arr) # 使用转换后的 numpy 数组
-                
-                # 3. 写入波长 (float 直接写没问题，但为了统一也可以转 numpy)
-                f.create_dataset(
-                    "wavelength", 
-                    data=np.array([float(self.wavelength_spin.text())])
-                )
+                f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
+                f.attrs['pos_x'] = np.array(pos_x)
+                f.attrs['pos_y'] = np.array(pos_y)
+                f.attrs['pixel_size'] = np.array([float(self.pixel_size)])
+                try:
+                    ox = int(self.off_x.text())
+                    oy = int(self.off_y.text())
+                except:
+                    try:
+                        ox = int(self.off_x.value())
+                        oy = int(self.off_y.value())
+                    except:
+                        ox, oy = 0, 0
+                f.attrs['offset_x'] = np.array([float(ox)])
+                f.attrs['offset_y'] = np.array([float(oy)])
+                try:
+                    rw = int(self.roi_w.text())
+                    rh = int(self.roi_h.text())
+                except:
+                    rh = int(dp_arr.shape[1]) if dp_arr.ndim >= 2 else 0
+                    rw = int(dp_arr.shape[2]) if dp_arr.ndim >= 3 else 0
+                f.attrs['detector_size'] = np.array([rw, rh])
+                f.attrs['exposure_time'] = np.array([float(self.exposure_spin.value())])
                 
                 # 4. 其他属性
                 # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
@@ -1230,5 +1253,4 @@ if __name__ == '__main__':
     window = LogicWindow()
     window.show()
     sys.exit(app.exec())
-
 
