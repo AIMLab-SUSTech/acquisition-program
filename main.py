@@ -170,10 +170,9 @@ class ScanWorker(QThread):
             dx = self.scanner.x[i]
             dy = self.scanner.y[i]
             
-            # --- 移动逻辑 (这里复用了之前的相对移动逻辑，建议根据实际封装) ---
+            # --- 移动逻辑 ---
             try:
                 # 简单粗暴：直接调用 motion 的相对移动
-                # 警告：这里假设 motion 对象是线程安全的，通常 C++ 底层驱动是阻塞的，所以没问题
                 self.motion.move_by(dx, axis=0) # 假设 0 是 X
                 self.motion.move_by(dy, axis=1) # 假设 1 是 Y
                 
@@ -246,18 +245,16 @@ class InteractiveImageView(QGraphicsView):
 
     def update_image(self, image_data, show_mask=False):
         # ===========================
-        # 1. 显示底图 (保持不变)
+        # 1. 显示底图 (保持不变) 可能有问题
         # ===========================
         self.np_img = image_data
-        
-        # 转换数据类型
         if image_data.dtype == np.uint16:
-            display_data = (image_data / 16).astype(np.uint8) 
+            h, w = image_data.shape
+            qimg = QImage(image_data.data, w, h, w * 2, QImage.Format.Format_Grayscale16)
         else:
             display_data = image_data.astype(np.uint8)
-
-        h, w = display_data.shape
-        qimg = QImage(display_data.data, w, h, w, QImage.Format.Format_Grayscale8)
+            h, w = display_data.shape
+            qimg = QImage(display_data.data, w, h, w, QImage.Format.Format_Grayscale8)
         pix = QPixmap.fromImage(qimg)
 
         # 更新图片对象
@@ -269,12 +266,9 @@ class InteractiveImageView(QGraphicsView):
 
         # ===========================
         # 2. 核心修复：Mask 绘制逻辑
-        #    策略：如果有旧的，先删掉；如果需要显示，再画新的。
-        #    这能彻底解决“点击没反应”的 Bug。
         # ===========================
         
-        # --- 第一步：清理战场 (只要有旧线条，统统删掉) ---
-        # 使用 getattr 防止第一次运行时变量未定义报错
+        # --- 第一步：清理战场 ---
         if getattr(self, 'v_line', None): 
             self.scene.removeItem(self.v_line)
             self.v_line = None
@@ -707,30 +701,8 @@ class LogicWindow(ModernUI):
         if not self.camera:
             self.log_warning("相机未连接")
             return
-        img = self.camera.read_newest_image()
-        if img is None: 
-            self.log_warning("无法获取图像用于计算")
-            return
-        h_full, w_full = img.shape
-        threshold = np.mean(img) + np.std(img) * 2
-        mask = img > threshold
-        if np.sum(mask) == 0:
-            self.log_warning("图像过暗，无法寻找中心")
-            return
-        y_indices, x_indices = np.indices(img.shape)
-        total_mass = np.sum(img[mask])
-        center_x = np.sum(x_indices[mask] * img[mask]) / total_mass
-        center_y = np.sum(y_indices[mask] * img[mask]) / total_mass
-        self.log_success(f"检测到质心: ({center_x:.1f}, {center_y:.1f})")
-        
-        sensor_cx = w_full / 2
-        sensor_cy = h_full / 2
-        offset_x = int(center_x - sensor_cx)
-        offset_y = int(center_y - sensor_cy)
-        
-        self.off_x.setValue(offset_x)
-        self.off_y.setValue(offset_y)
-        self.log_success(f"已更新偏移量: X={offset_x}, Y={offset_y}")
+
+        H, W = cropped_img.shape
         
     # --- 位移台逻辑 ---
     def update_stage_display(self):
@@ -979,6 +951,17 @@ class LogicWindow(ModernUI):
             self.log_error("扫描器未初始化")
             return
         
+        self.was_live_before_scan = False # 记录一下之前的状态
+        if self.is_live:
+            self.timer.stop()
+            self.is_live = False
+            self.btn_live.setText("👁 启动")
+            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+            self.was_live_before_scan = True
+            self.log_info("为保证采集稳定，已暂停实时显示")
+            # 给一点时间让相机把 buffer 清空或让定时器完全停下
+            time.sleep(0.2)
+
         if self.dark_frame is None:
             confirm = QMessageBox.question(
                 self, 
@@ -1074,8 +1057,7 @@ class LogicWindow(ModernUI):
         # 检查是否需要显示 Mask (十字准星)
         show_mask = self.chk_mask.isChecked()
         
-        # 这里的 img_data 可能是 float (如果减去了暗场)，
-        # update_image 内部有处理 float->uint8 的逻辑，直接传即可
+        # 这里的 img_data 可能是 float，
         self.image_view.update_image(img_data, show_mask=show_mask)
 
         # 4. (可选) 实时保存单帧 TIF 方便调试
@@ -1106,6 +1088,10 @@ class LogicWindow(ModernUI):
         final_y = self.scanner.final_pos[1]
         self._move_logical_delta(-final_x, 0)
         self._move_logical_delta(-final_y, 1)
+        
+        if getattr(self, 'was_live_before_scan', False):
+            self.log_info("自动恢复实时显示...")
+            self.toggle_live() # 直接调用 toggle 函数重新启动
 
     def _write_scan_to_h5(self,dp, pos_x, pos_y, h5_path=None):
         """
