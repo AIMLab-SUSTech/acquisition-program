@@ -250,11 +250,11 @@ class InteractiveImageView(QGraphicsView):
         self.np_img = image_data
         if image_data.dtype == np.uint16:
             h, w = image_data.shape
-            qimg = QImage(image_data.data, w, h, w * 2, QImage.Format.Format_Grayscale16)
         else:
-            display_data = image_data.astype(np.uint8)
+            display_data = image_data.astype(np.uint16) << 4
             h, w = display_data.shape
-            qimg = QImage(display_data.data, w, h, w, QImage.Format.Format_Grayscale8)
+
+        qimg = QImage(display_data.data, w, h, QImage.Format.Format_Grayscale16)
         pix = QPixmap.fromImage(qimg)
 
         # 更新图片对象
@@ -1028,6 +1028,19 @@ class LogicWindow(ModernUI):
         self.worker.finished_signal.connect(self._scan_finished)
         self.worker.start()
 
+        if self.is_live:
+            self.timer.stop()
+            self.is_live = False
+            self.btn_live.setText("🟢 启动")
+            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+            self.was_live_before_scan = True
+            self.log_info("为保证采集稳定,已暂停实时显示")
+            
+            # 【关键】让相机停止连续采集
+            if hasattr(self.camera, 'stop_acquisition'):
+                self.camera.stop_acquisition()
+            time.sleep(0.3)  # 给更长时间让buffer清空
+
     def _worker_log(self, msg, level):
         """
         处理子线程发来的日志信号
@@ -1088,7 +1101,7 @@ class LogicWindow(ModernUI):
         final_y = self.scanner.final_pos[1]
         self._move_logical_delta(-final_x, 0)
         self._move_logical_delta(-final_y, 1)
-        
+
         if getattr(self, 'was_live_before_scan', False):
             self.log_info("自动恢复实时显示...")
             self.toggle_live() # 直接调用 toggle 函数重新启动
@@ -1107,6 +1120,8 @@ class LogicWindow(ModernUI):
         try:  
                 # --- 将 Data 写入 H5 ---
             dp_arr = np.array(dp)       
+            pos_x = np.array(pos_x)
+            pos_y = np.array(pos_y)
 
             with h5py.File(h5_path, 'w') as f:            
                 # 1. 写入图像数据
@@ -1115,9 +1130,17 @@ class LogicWindow(ModernUI):
                     data=dp_arr,        # 使用转换后的 numpy 数组
                     compression="gzip"  # 只有 numpy 数组才能支持压缩
                 )             
+                f.create_dataset(
+                    "x", 
+                    data=pos_x,        # 使用转换后的 numpy 数组
+                    compression="gzip"  # 只有 numpy 数组才能支持压缩
+                )
+                f.create_dataset(
+                    "y", 
+                    data=pos_y,        # 使用转换后的 numpy 数组
+                    compression="gzip"  # 只有 numpy 数组才能支持压缩
+                )
                 f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
-                f.attrs['pos_x'] = np.array(pos_x)
-                f.attrs['pos_y'] = np.array(pos_y)
                 f.attrs['pixel_size'] = np.array([float(self.pixel_size)])
                 try:
                     ox = int(self.off_x.text())
