@@ -1033,7 +1033,6 @@ class LogicWindow(ModernUI):
         self.worker.update_signal.connect(self._update_scan_preview)
         self.worker.log_signal.connect(self._worker_log)
         self.worker.finished_signal.connect(self._scan_finished)
-        self.worker.start()
 
         if self.is_live:
             self.timer.stop()
@@ -1047,6 +1046,8 @@ class LogicWindow(ModernUI):
             if hasattr(self.camera, 'stop_acquisition'):
                 self.camera.stop_acquisition()
             time.sleep(0.3)  # 给更长时间让buffer清空
+
+        self.worker.start()
 
     def _worker_log(self, msg, level):
         """
@@ -1139,7 +1140,7 @@ class LogicWindow(ModernUI):
                     del f["x"]
                 if "y" in f:
                     del f["y"]
-                    
+
                 # 1. 写入图像数据
                 f.create_dataset(
                     "data", 
