@@ -15,7 +15,7 @@ from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
-from gui_generate import ModernUI
+from UI import ModernUI
 
 # =========================================================
 #  硬件加载线程
@@ -68,6 +68,7 @@ class DeviceLoader(QThread):
                     case "QHY":
                         from QHY import QHYCamera
                         device_instance = QHYCamera()
+                        device_instance.set_bit_depth(16)
                         device_instance.start_acquisition()
                         
 
@@ -76,7 +77,7 @@ class DeviceLoader(QThread):
                     case "NewPort":
                         from motion_controller import xps
                         device_instance = xps(IP='192.168.0.254')
-                        device_instance.init_groups(['Group5', 'Group6'])
+                        device_instance.init_groups(['Group3', 'Group4'])
                     case "Nators":
                         from motion_controller import nators
                         device_instance = nators(ip_address="192.168.0.254")
@@ -155,12 +156,11 @@ class ScanWorker(QThread):
 
     def run(self):
         total = len(self.scanner.x)
-        
         if hasattr(self.camera, 'set_trigger_mode'):
             # 停止实时流，准备精确采集
             self.camera.set_trigger_mode('software')
             # 给一点时间让相机反应
-            time.sleep(0.1)
+            time.sleep(0.2)  # 增加延迟时间
 
         for i in range(total):
             if not self.is_running: break
@@ -174,14 +174,30 @@ class ScanWorker(QThread):
                 # 简单粗暴：直接调用 motion 的相对移动
                 self.motion.move_by(dx, axis=0) # 假设 0 是 X
                 self.motion.move_by(dy, axis=1) # 假设 1 是 Y
-                
+                # 给位移台足够的时间稳定
+                time.sleep(0.2)  # 增加延迟时间
             except Exception as e:
                 self.log_signal.emit(f"移动错误: {e}", "error")
                 break
 
-            # 2. 读取图像
-            raw_img = self.camera.read_newest_image()
-            raw_img = self.worker_crop(raw_img)
+            # 2. 读取图像 - 多次尝试确保获取到有效图像
+            max_retries = 3
+            raw_img = None
+            for attempt in range(max_retries):
+                # 给相机足够的时间采集
+                time.sleep(self.exposure_s * 1.5)  # 增加采集时间
+                raw_img = self.camera.read_newest_image()
+                if raw_img is not None:
+                    # 检查图像是否为全黑
+                    if np.max(raw_img) > 0:
+                        break
+                    else:
+                        self.log_signal.emit(f"第 {i} 点第 {attempt+1} 次采集到全黑图像，重试...", "warning")
+                else:
+                    self.log_signal.emit(f"第 {i} 点第 {attempt+1} 次采集失败，重试...", "warning")
+            
+            if raw_img is not None:
+                raw_img = self.worker_crop(raw_img)
             
             # 获取当前绝对坐标 (用于保存)
             # 如果驱动读坐标慢，可以用理论坐标代替，这里尝试读硬件
@@ -198,17 +214,23 @@ class ScanWorker(QThread):
             if raw_img is not None:
                 # 处理暗场 (如果在线程里做耗时计算，UI会更流畅)
                 if self.dark_frame is not None:
-                    img_float = raw_img.astype(np.uint16)
-                    dark = self.dark_frame
-                    if dark.dtype != np.uint16:
-                        dark = dark.astype(np.uint16)
-                    if img_float.max() <= 255 and dark.max() > 255:
-                        dark = dark / 256
-                    subtracted = img_float - dark
+                    # 先转换为uint16，然后再转换为int32进行减法，避免溢出
+                    img_uint16 = raw_img.astype(np.uint16)
+                    dark_uint16 = self.dark_frame.astype(np.uint16)
+                    # 转换为int32进行减法，避免uint16溢出
+                    img_int32 = img_uint16.astype(np.int32)
+                    dark_int32 = dark_uint16.astype(np.int32)
+                    subtracted = img_int32 - dark_int32
+                    # 将负值设为0
                     subtracted[subtracted < 0] = 0
-                    final_data = subtracted
+                    # 转换回uint16
+                    final_data = subtracted.astype(np.uint16)
                 else:
-                    final_data = raw_img
+                    # 确保数据类型为uint16
+                    if raw_img.dtype != np.uint16:
+                        final_data = raw_img.astype(np.uint16)
+                    else:
+                        final_data = raw_img
                 
                 # 发送信号给主界面保存和显示
                 self.update_signal.emit(final_data, cur_x, cur_y, i)
@@ -253,14 +275,14 @@ class InteractiveImageView(QGraphicsView):
         # ===========================
         self.np_img = image_data
         if image_data.dtype == np.uint16:
-            h, w = image_data.shape
+            display_data = image_data.astype(np.uint16)
         else:
             display_data = image_data.astype(np.uint16) << 4
-            h, w = display_data.shape
 
-        qimg = QImage(display_data.data, w, h, QImage.Format.Format_Grayscale16)
+        h, w = display_data.shape
+        qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16) #  w, h, 2*w,
         pix = QPixmap.fromImage(qimg)
-
+        
         # 更新图片对象
         if self.pixmap_item is None:
             self.pixmap_item = self.scene.addPixmap(pix)
@@ -700,7 +722,7 @@ class LogicWindow(ModernUI):
             self.btn_live.setStyleSheet("background:#7f8c8d;color:white;font-weight:bold;")
             self.log_success("实时显示已启动")
 
-    def calculate_center(self):
+    def calculate_center(self): #todo
         if not self.camera:
             self.log_warning("相机未连接")
             return
@@ -953,17 +975,6 @@ class LogicWindow(ModernUI):
         if not getattr(self, 'scanner', None): 
             self.log_error("扫描器未初始化")
             return
-        
-        self.was_live_before_scan = False # 记录一下之前的状态
-        if self.is_live:
-            self.timer.stop()
-            self.is_live = False
-            self.btn_live.setText("👁 启动")
-            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
-            self.was_live_before_scan = True
-            self.log_info("为保证采集稳定，已暂停实时显示")
-            # 给一点时间让相机把 buffer 清空或让定时器完全停下
-            time.sleep(0.2)
 
         if self.dark_frame is None:
             confirm = QMessageBox.question(
@@ -975,14 +986,23 @@ class LogicWindow(ModernUI):
             )
             if confirm == QMessageBox.StandardButton.Yes:
                 img_dark = self.camera.read_newest_image()
+                if img_dark is None:
+                    self.log_error("暗场采集失败：无法获取图像")
+                    return
                 img_dark = self.crop_image(img_dark)
+                if img_dark is None:
+                    self.log_error("暗场采集失败：图像裁剪失败")
+                    return
                 self.dark_frame = img_dark.astype(np.uint16)
                 self.log_success("暗场采集完成")
                 path_dark = os.path.join(self.save_dir, f"dark.tif")
-                if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
-                    Image.fromarray(img_dark).save(path_dark)
-                else:
-                    Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
+                try:
+                    if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
+                        Image.fromarray(img_dark).save(path_dark)
+                    else:
+                        Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
+                except Exception as e:
+                    self.log_error(f"暗场保存失败: {e}")
             else:
                 self.log_info("采集已取消")
                 return
@@ -1079,18 +1099,12 @@ class LogicWindow(ModernUI):
         show_mask = self.chk_mask.isChecked()
         self.image_view.update_image(img_data, show_mask=show_mask)
 
-        # 4. (可选) 实时保存单帧 TIF 方便调试
         frame_name = f"scan_{idx:03d}.tif"
         path = os.path.join(self.save_dir, frame_name)
         try:
-            # 简单的归一化保存，或者直接保存 raw
+            # 直接保存 raw
             if img_data.dtype != np.uint8 and img_data.dtype != np.uint16:
-                d = img_data
-                d = d - np.min(d)
-                m = np.max(d)
-                if m > 0:
-                    d = d / m
-                save_data = (d * 65535).astype(np.uint16)
+                save_data = img_data.astype(np.uint16)
             else:
                 save_data = img_data
             Image.fromarray(save_data).save(path)
@@ -1106,7 +1120,7 @@ class LogicWindow(ModernUI):
         self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
         self.log_success("H5 文件写入完成！")
         
-        # 回到原点 (可选)
+        # 回到原点
         final_x = self.scanner.final_pos[0]
         final_y = self.scanner.final_pos[1]
         self._move_logical_delta(-final_x, 0)
@@ -1213,7 +1227,7 @@ class LogicWindow(ModernUI):
         if ok and filename.strip():
             final_name = filename.strip()
             
-            # 1. 调用通用函数保存 PNG，并获取数据 (save_current_frame只负责保存TIF和返回数据)
+            # 1. 调用通用函数保存 TIF，并获取数据 (save_current_frame只负责保存TIF和返回数据)
             img_data = self.save_current_frame(base_name=final_name)
             
             if img_data is None:
@@ -1230,17 +1244,17 @@ class LogicWindow(ModernUI):
         3. 返回 (image_data, cur_x, cur_y) 供 Dataclass 或 H5 写入使用
         """
         if not self.camera: 
-            return None, 0, 0
+            return None
 
         try:
             # 1. 获取并裁剪图像
             full_img = self.camera.read_newest_image()
             if full_img is None: 
-                return None, 0, 0
+                return None
             
             roi_img = self.crop_image(full_img)
             if roi_img is None: 
-                return None, 0, 0
+                return None
             
             # 获取当前坐标
             try:

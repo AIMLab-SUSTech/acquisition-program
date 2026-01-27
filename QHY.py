@@ -56,7 +56,6 @@ class QHYCamera:
         self.camhandle = 0
         self._is_live_mode = False
         self._current_bit_depth = 16
-        self.set_bit_depth(16)
         self._exposure_us = 20000.0  # 默认20ms
         
         self.image_width = 0
@@ -297,7 +296,7 @@ class QHYCamera:
         if not self._is_live_mode:
             self.start_acquisition()
             # 【关键】等待第一帧准备好（曝光时间 + buffer时间）
-            wait_time = max(0.1, self._exposure_us / 1e6 + 0.05)
+            wait_time = max(0.5, self._exposure_us / 1e6 + 0.5)
             print(f"Waiting {wait_time:.2f}s for first frame...")
             time.sleep(wait_time)
             
@@ -306,16 +305,27 @@ class QHYCamera:
         b = ctypes.c_uint32()
         c = ctypes.c_uint32()
         
-        # 【关键修改】循环尝试获取，最多重试5次
-        max_retries = 5
+        # 【关键修改】强制清除缓冲区，确保读取最新帧
+        # 先读取多次丢弃，确保缓冲区被清空
+        print("Clearing camera buffer...")
+        for i in range(5):  # 增加清除次数
+            self.qhyccddll.GetQHYCCDLiveFrame(self.camhandle, byref(w), byref(h), 
+                                           byref(b), byref(c), self.imgdata_buffer)
+            time.sleep(0.02)  # 稍微增加等待时间
+        
+        # 【关键修改】循环尝试获取，最多重试10次，每次都等待新帧
+        max_retries = 10
         for attempt in range(max_retries):
+            # 等待相机捕获新帧
+            time.sleep(self._exposure_us / 1e6 + 0.1)  # 等待至少一个曝光时间
+            
             ret = self.qhyccddll.GetQHYCCDLiveFrame(self.camhandle, byref(w), byref(h), 
                                                    byref(b), byref(c), self.imgdata_buffer)
             
             if ret == 0:
                 # 成功获取数据
-                # if attempt > 0:
-                #     print(f"Got frame after {attempt + 1} attempts")
+                if attempt > 0:
+                    print(f"Got frame after {attempt + 1} attempts")
                 
                 if b.value == 16:
                     raw_data = np.frombuffer(self.imgdata_buffer, dtype=np.uint16, 
@@ -327,21 +337,37 @@ class QHYCamera:
                     print(f"Unknown bit depth: {b.value}")
                     return None
                 
+                # 检查数据是否有效
+                if raw_data.size == 0:
+                    print(f"Empty data received on attempt {attempt + 1}")
+                    time.sleep(0.1)
+                    continue
+                
                 if c.value == 1:
-                    return raw_data.reshape((h.value, w.value))
+                    img = raw_data.reshape((h.value, w.value))
                 elif c.value == 3:
-                    return raw_data.reshape((h.value, w.value, c.value))
+                    img = raw_data.reshape((h.value, w.value, c.value))
                 else:
                     print(f"Unknown channel count: {c.value}")
                     return None
+                
+                # 检查图像是否为全黑
+                if np.max(img) > 0:
+                    print(f"Successfully captured frame with max value: {np.max(img)}")
+                    return img
+                else:
+                    print(f"Black image received on attempt {attempt + 1}, max value: {np.max(img)}")
+                    time.sleep(0.1)
+                    continue
             else:
                 # 失败，短暂等待后重试
-                # if attempt == 0:
-                #     # 第一次失败时打印详细信息
-                #     print(f"GetQHYCCDLiveFrame ret = {ret} (attempt {attempt + 1})")
-                time.sleep(0.02)  # 等待20ms
+                if attempt == 0:
+                    # 第一次失败时打印详细信息
+                    print(f"GetQHYCCDLiveFrame ret = {ret} (attempt {attempt + 1})")
+                time.sleep(0.1)  # 增加等待时间
         
         # 所有尝试都失败
+        print("All attempts to get frame failed")
         return None
 
     def get_bit_depth(self):
