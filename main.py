@@ -631,8 +631,7 @@ class LogicWindow(ModernUI):
                 max_val = np.max(cropped_img)
                 self.line_global_max.setText(f"{max_val}")
                 
-                # 检查是否过曝 (self.saturation_value 是之前计算好的，如 255 或 4095)
-                # 可以在 __init__ 里给个默认值防止报错: self.saturation_value = getattr(self, 'saturation_value', 65535)
+                # 检查是否过曝
                 limit = getattr(self, 'saturation_value', 65535)
                 
                 if max_val >= limit:
@@ -649,7 +648,7 @@ class LogicWindow(ModernUI):
                 # 处理 Log 变换
                 if self.chk_log.isChecked():
                     # log(1+x) 变换，拉伸暗部细节
-                    img_disp = np.log1p(cropped_img.astype(np.float32))
+                    img_disp = np.log1p(cropped_img.astype(np.uint16))
                     # 归一化回原来的位深范围，以便显示
                     img_disp = (img_disp / img_disp.max() * limit).astype(np.uint16)
                     self.image_view.update_image(img_disp, show_mask)
@@ -977,7 +976,7 @@ class LogicWindow(ModernUI):
             if confirm == QMessageBox.StandardButton.Yes:
                 img_dark = self.camera.read_newest_image()
                 img_dark = self.crop_image(img_dark)
-                self.dark_frame = img_dark.astype(np.float32)
+                self.dark_frame = img_dark.astype(np.uint16)
                 self.log_success("暗场采集完成")
                 path_dark = os.path.join(self.save_dir, f"dark.tif")
                 if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
@@ -1077,8 +1076,6 @@ class LogicWindow(ModernUI):
         # 2. 更新界面图像显示
         # 检查是否需要显示 Mask (十字准星)
         show_mask = self.chk_mask.isChecked()
-        
-        # 这里的 img_data 可能是 float，
         self.image_view.update_image(img_data, show_mask=show_mask)
 
         # 4. (可选) 实时保存单帧 TIF 方便调试
@@ -1135,7 +1132,14 @@ class LogicWindow(ModernUI):
             pos_x = np.array(pos_x)
             pos_y = np.array(pos_y)
 
-            with h5py.File(h5_path, 'w') as f:            
+            with h5py.File(h5_path, 'a') as f:    
+                if "data" in f:
+                    del f["data"]
+                if "x" in f:
+                    del f["x"]
+                if "y" in f:
+                    del f["y"]
+                    
                 # 1. 写入图像数据
                 f.create_dataset(
                     "data", 
