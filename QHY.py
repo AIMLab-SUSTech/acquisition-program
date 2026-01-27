@@ -56,6 +56,7 @@ class QHYCamera:
         self.camhandle = 0
         self._is_live_mode = False
         self._current_bit_depth = 16
+        self.set_bit_depth(16)
         self._exposure_us = 20000.0  # 默认20ms
         
         self.image_width = 0

@@ -68,7 +68,6 @@ class DeviceLoader(QThread):
                     case "QHY":
                         from QHY import QHYCamera
                         device_instance = QHYCamera()
-                        device_instance.set_bit_depth(16)
                         device_instance.start_acquisition()
                         
 
@@ -199,8 +198,13 @@ class ScanWorker(QThread):
             if raw_img is not None:
                 # 处理暗场 (如果在线程里做耗时计算，UI会更流畅)
                 if self.dark_frame is not None:
-                    img_float = raw_img.astype(np.float32)
-                    subtracted = img_float - self.dark_frame
+                    img_float = raw_img.astype(np.uint16)
+                    dark = self.dark_frame
+                    if dark.dtype != np.uint16:
+                        dark = dark.astype(np.uint16)
+                    if img_float.max() <= 255 and dark.max() > 255:
+                        dark = dark / 256
+                    subtracted = img_float - dark
                     subtracted[subtracted < 0] = 0
                     final_data = subtracted
                 else:
@@ -971,11 +975,15 @@ class LogicWindow(ModernUI):
                 QMessageBox.StandardButton.No
             )
             if confirm == QMessageBox.StandardButton.Yes:
-                self.dark_frame = self.camera.read_newest_image()
-                self.dark_frame = self.crop_image(np.float32(self.dark_frame))
+                img_dark = self.camera.read_newest_image()
+                img_dark = self.crop_image(img_dark)
+                self.dark_frame = img_dark.astype(np.float32)
                 self.log_success("暗场采集完成")
                 path_dark = os.path.join(self.save_dir, f"dark.tif")
-                Image.fromarray(self.dark_frame).save(path_dark)
+                if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
+                    Image.fromarray(img_dark).save(path_dark)
+                else:
+                    Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
             else:
                 self.log_info("采集已取消")
                 return
@@ -1079,8 +1087,12 @@ class LogicWindow(ModernUI):
         try:
             # 简单的归一化保存，或者直接保存 raw
             if img_data.dtype != np.uint8 and img_data.dtype != np.uint16:
-                # 如果是float，简单转为uint16保存，防止报错
-                save_data = img_data.astype(np.uint16)
+                d = img_data
+                d = d - np.min(d)
+                m = np.max(d)
+                if m > 0:
+                    d = d / m
+                save_data = (d * 65535).astype(np.uint16)
             else:
                 save_data = img_data
             Image.fromarray(save_data).save(path)
