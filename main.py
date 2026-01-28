@@ -15,7 +15,7 @@ from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
-from gui import ModernUI
+from UI import ModernUI
 
 # =========================================================
 #  硬件加载线程
