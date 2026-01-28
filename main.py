@@ -15,7 +15,7 @@ from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
-from UI import ModernUI
+from gui import ModernUI
 
 # =========================================================
 #  硬件加载线程
@@ -425,28 +425,28 @@ class LogicWindow(ModernUI):
         """信息日志 - 蓝色"""
         timestamp = time.strftime("%H:%M:%S")
         html = f"<span style='color:#2196F3;'><b>[{timestamp}]</b> ℹ️ {msg}</span>"
-        self.txt_log.append(html)
+        self.txt_log.appendHtml(html)
         self._scroll_to_bottom()
     
     def log_success(self, msg):
         """成功日志 - 绿色"""
         timestamp = time.strftime("%H:%M:%S")
         html = f"<span style='color:#4CAF50;'><b>[{timestamp}]</b> ✅ {msg}</span>"
-        self.txt_log.append(html)
+        self.txt_log.appendHtml(html)   
         self._scroll_to_bottom()
     
     def log_warning(self, msg):
         """警告日志 - 橙色"""
         timestamp = time.strftime("%H:%M:%S")
         html = f"<span style='color:#FF9800;'><b>[{timestamp}]</b> ⚠️ {msg}</span>"
-        self.txt_log.append(html)
+        self.txt_log.appendHtml(html)
         self._scroll_to_bottom()
     
     def log_error(self, msg):
         """错误日志 - 红色"""
         timestamp = time.strftime("%H:%M:%S")
         html = f"<span style='color:#F44336;'><b>[{timestamp}]</b> ❌ {msg}</span>"
-        self.txt_log.append(html)
+        self.txt_log.appendHtml(html)
         self._scroll_to_bottom()
 
     def _scroll_to_bottom(self):
@@ -1040,6 +1040,10 @@ class LogicWindow(ModernUI):
             ox, oy = 0, 0
             
         crop_params_tuple = (w, h, ox, oy) # 打包成元组
+
+        self.dp = []
+        self.pos_x = []
+        self.pos_y = []
 
         # === 【修改】 实例化 Worker 时传入参数 ===
         self.worker = ScanWorker(
