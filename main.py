@@ -1,4 +1,3 @@
-from re import S
 import sys
 import os
 import time
@@ -200,8 +199,7 @@ class ScanWorker(QThread):
             if raw_img is not None:
                 raw_img = self.worker_crop(raw_img)
             
-            # 获取当前绝对坐标 (用于保存)
-            # 如果驱动读坐标慢，可以用理论坐标代替，这里尝试读硬件
+            # 获取当前绝对坐标
             cur_x = 0.0
             cur_y = 0.0
             try:
@@ -213,7 +211,7 @@ class ScanWorker(QThread):
                 return
 
             if raw_img is not None:
-                # 处理暗场 (如果在线程里做耗时计算，UI会更流畅)
+                # 处理暗场 
                 if self.dark_frame is not None:
                     # 先转换为uint16，然后再转换为int32进行减法，避免溢出
                     img_uint16 = raw_img.astype(np.uint16)
@@ -1156,7 +1154,7 @@ class LogicWindow(ModernUI):
         
         try:  
                 # --- 将 Data 写入 H5 ---
-            dp_arr = np.array(dp)       
+            dp_arr = np.array(dp, dtype=np.uint16)       
             pos_x = np.array(pos_x)
             pos_y = np.array(pos_y)
 
