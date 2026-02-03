@@ -110,72 +110,68 @@ class Scanner:
                         pos_absolute.append((x, y))
                     
         elif self.mode == 'rectangle':
-            # === 矩形模式 (从中心开始的回字扫描) ===
+            # === 矩形模式 (最短路径/蛇形回字扫描) ===
             nx = int(math.ceil(self.scan_range_x / self.step))
             ny = int(math.ceil(self.scan_range_y / self.step))
+            nx, ny = max(1, nx), max(1, ny)
             
-            nx = max(1, nx)
-            ny = max(1, ny)
-            
-            # 计算中心索引（取整，确保是整数网格坐标）
-            center_x = nx // 2
-            center_y = ny // 2
-            
-            pos_absolute = []
+            center_x, center_y = nx // 2, ny // 2
             x_offset = (nx - 1) * self.step / 2.0
             y_offset = (ny - 1) * self.step / 2.0
             
-            # 从中心开始向外，一圈一圈扫描
+            pos_absolute = []
             max_radius = max(center_x, center_y, nx - center_x - 1, ny - center_y - 1)
             
+            # 记录上一圈的最后一个点坐标，用于判断下一圈从哪里开始最近
+            last_pos = None
+
             for r in range(max_radius + 1):
-                # 当前圈的边界
-                left = center_x - r
-                right = center_x + r
-                top = center_y - r
-                bottom = center_y + r
+                left, right = center_x - r, center_x + r
+                top, bottom = center_y - r, center_y + r
                 
-                # 生成当前圈的所有点（按顺时针方向）
-                current_ring = []
+                # 1. 提取当前圈边界内且未被之前圈占用的点
+                # 逻辑：只取四个边上的点
+                ring_points = []
                 
-                # 上边（从左到右）
-                if top >= 0 and top < ny:
-                    for x in range(left, right + 1):
-                        if 0 <= x < nx:
-                            current_ring.append((top, x))
-                
-                # 右边（从上到下，跳过右上角）
-                if right >= 0 and right < nx:
-                    for y in range(top + 1, bottom + 1):
-                        if 0 <= y < ny:
-                            current_ring.append((y, right))
-                
-                # 下边（从右到左，跳过右下角）
-                if bottom >= 0 and bottom < ny and r > 0:
-                    for x in range(right - 1, left - 1, -1):
-                        if 0 <= x < nx:
-                            current_ring.append((bottom, x))
-                
-                # 左边（从下到上，跳过左下角和左上角）
-                if left >= 0 and left < nx and r > 0:
-                    for y in range(bottom - 1, top, -1):
-                        if 0 <= y < ny:
-                            current_ring.append((y, left))
-                
-                # 蛇形处理：奇数圈反向扫描
-                if r % 2 == 1:
-                    current_ring.reverse()
-                
-                # 转换为物理坐标
-                for y_idx, x_idx in current_ring:
+                # 顶部边
+                if 0 <= top < ny:
+                    for x in range(max(0, left), min(nx, right + 1)):
+                        ring_points.append((top, x))
+                # 右侧边 (去掉顶点)
+                if 0 <= right < nx:
+                    for y in range(max(0, top + 1), min(ny, bottom + 1)):
+                        ring_points.append((y, right))
+                # 底部边 (由右向左，去掉顶点)
+                if 0 <= bottom < ny:
+                    for x in range(min(nx - 1, right - 1), max(-1, left - 1), -1):
+                        ring_points.append((bottom, x))
+                # 左侧边 (由下向上，去掉顶点)
+                if 0 <= left < nx:
+                    for y in range(min(ny - 1, bottom - 1), max(-1, top), -1):
+                        ring_points.append((y, left))
+
+                if not ring_points:
+                    continue
+
+                # 2. 核心优化：最短路径衔接
+                # 如果当前圈的第一个点离上一圈的最后一个点太远，则反转当前圈
+                if last_pos is not None:
+                    dist_to_start = abs(ring_points[0][0] - last_pos[0]) + abs(ring_points[0][1] - last_pos[1])
+                    dist_to_end = abs(ring_points[-1][0] - last_pos[0]) + abs(ring_points[-1][1] - last_pos[1])
+                    
+                    if dist_to_end < dist_to_start:
+                        ring_points.reverse()
+
+                # 3. 记录并转换坐标
+                for r_pos in ring_points:
+                    y_idx, x_idx = r_pos
                     x = x_idx * self.step - x_offset
                     y = y_idx * self.step - y_offset
                     pos_absolute.append((x, y))
+                    last_pos = r_pos
                     
         elif self.mode == 'fermat':
             # === 费马螺旋模式 (支持椭圆) ===
-            
-            # 2. 确定最大生成半径
             # 为了覆盖整个椭圆，必须生成到长轴的长度，然后再裁剪
             max_r = max(self.scan_range_x, self.scan_range_y)
             
@@ -203,10 +199,7 @@ class Scanner:
                 # 标准椭圆方程: (x/a)^2 + (y/b)^2 <= 1
                 if (x / self.scan_range_x)**2 + (y / self.scan_range_y)**2 <= 1.0000001:
                     pos_absolute.append((x, y))
-        
-        # 应用随机偏移（如果启用）
-        pos_absolute = self._apply_random_offset(pos_absolute)
-            
+
         # 转换为相对位移
         self.x = [0]
         self.y = [0]
@@ -388,7 +381,7 @@ def visualize_scan_path(scanner:Scanner, save_path=None, dpi=100):
 
 if __name__ == '__main__':
     # scanner = Scanner(0.3, 5, nth=6,mode='rectangle', random_offset=True, offset_ratio=0.1)
-    scanner = Scanner(1, 8, 5,mode='rectangle')
+    scanner = Scanner(1, 10, 10,mode='fermat')
     # mat_struct = {
     #     # 'sz_fft': np.int32(params.sz_fft),
     #     # 'wavelength': np.float64(params.wavelength),
