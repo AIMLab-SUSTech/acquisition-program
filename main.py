@@ -111,6 +111,7 @@ class ScanWorker(QThread):
         self.scanner = scanner
         self.exposure_s = exposure_time_ms / 1000.0
         self.dark_frame = dark_frame
+        self.bit_depth = 16
         
         # 解包裁剪参数 (width, height, off_x, off_y)
         self.target_w, self.target_h, self.off_x, self.off_y = crop_params
@@ -280,7 +281,7 @@ class InteractiveImageView(QGraphicsView):
             display_data = image_data.astype(np.uint16) << 4
 
         h, w = display_data.shape
-        qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16) #  w, h, 2*w,
+        qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16)
         pix = QPixmap.fromImage(qimg)
         
         # 更新图片对象
@@ -497,22 +498,21 @@ class LogicWindow(ModernUI):
             self.set_exposure_time()
 
             # 2. 获取位深
-            bit_depth = 16 
             try:
                 if hasattr(self.camera, 'get_bit_depth'):
-                    bit_depth = int(self.camera.get_bit_depth())
+                    self.bit_depth = int(self.camera.get_bit_depth())
                 elif hasattr(self.camera, 'bit_depth'):
-                    bit_depth = int(self.camera.bit_depth)
+                    self.bit_depth = int(self.camera.bit_depth)
                 elif hasattr(self.camera, 'BitDepth'):
-                    bit_depth = int(self.camera.BitDepth)
+                    self.bit_depth = int(self.camera.BitDepth)
             except Exception as e:
                 self.log_warning(f"获取位深失败，使用默认值 16: {e}")
 
             # 3. 计算饱和值
-            self.saturation_value = (1 << bit_depth) - 1
+            self.saturation_value = (1 << self.bit_depth) - 1
             
-            self.line_cam_max.setText(f"{self.saturation_value} ({bit_depth}-bit)")
-            self.log_success(f"相机就绪 | 位深: {bit_depth} | 饱和阈值: {self.saturation_value}")
+            self.line_cam_max.setText(f"{self.saturation_value} ({self.bit_depth}-bit)")
+            self.log_success(f"相机就绪 | 位深: {self.bit_depth} | 饱和阈值: {self.saturation_value}")
             
         else:
             self.log_error(f"相机初始化失败: {result}")
@@ -654,7 +654,7 @@ class LogicWindow(ModernUI):
                 self.line_global_max.setText(f"{max_val}")
                 
                 # 检查是否过曝
-                limit = getattr(self, 'saturation_value', 65535)
+                limit = getattr(self, 'saturation_value', 2**self.bit_depth - 1)
                 
                 if max_val >= limit:
                     self.line_global_max.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
@@ -670,9 +670,7 @@ class LogicWindow(ModernUI):
                 # 处理 Log 变换
                 if self.chk_log.isChecked():
                     # log(1+x) 变换，拉伸暗部细节
-                    img_disp = np.log1p(cropped_img.astype(np.uint16))
-                    # 归一化回原来的位深范围，以便显示
-                    img_disp = (img_disp / img_disp.max() * limit).astype(np.uint16)
+                    img_disp = np.sqrt(2**self.bit_depth - 1) * np.sqrt(cropped_img).astype(np.uint16)
                     self.image_view.update_image(img_disp, show_mask)
                 else:
                     # 正常线性显示
@@ -726,8 +724,10 @@ class LogicWindow(ModernUI):
         if not self.camera:
             self.log_warning("相机未连接")
             return
+                
+        self.off_x.setText("0")
+        self.off_y.setText("0")
 
-        H, W = cropped_img.shape
         
     # --- 位移台逻辑 ---
     def update_stage_display(self):
@@ -970,6 +970,15 @@ class LogicWindow(ModernUI):
         if not self.confirm_directory():
             return
 
+        self.btn_cap.setEnabled(False)  # 锁定按钮
+        self.btn_cap.setText("采集中...")
+
+        # 3. 停止旧线程（双重保险）
+        if hasattr(self, 'worker') and self.worker is not None:
+            if self.worker.isRunning():
+                self.worker.stop()
+                self.worker.wait(50) # 等待旧线程结束
+
         # 2. 路径检查
         self.preview_scan_path()
         if not getattr(self, 'scanner', None): 
@@ -991,7 +1000,7 @@ class LogicWindow(ModernUI):
                     return
                 img_dark = self.crop_image(img_dark)
                 if img_dark is None:
-                    self.log_error("暗场采集失败：图像裁剪失败")
+                    self.log_error("暗场采集失败：图像裁剪失败") 
                     return
                 self.dark_frame = img_dark.astype(np.uint16)
                 self.log_success("暗场采集完成")
