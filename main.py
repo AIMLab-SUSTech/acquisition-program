@@ -968,6 +968,14 @@ class LogicWindow(ModernUI):
         if not self.confirm_directory():
             return
 
+        if not self.camera:
+            self.log_error("相机未初始化")
+            return
+        
+        if not self.motor:
+            self.log_error("电机未初始化")
+            return
+
         self.btn_cap.setEnabled(False)  # 锁定按钮
         self.btn_cap.setText("采集中...")
 
