@@ -35,42 +35,33 @@ class DeviceLoader(QThread):
                     case "IDS":
                         from camera import IDS
                         device_instance = IDS()
-                        device_instance.start_acquisition()
                         device_instance.set_pixel_rate(7e7)
                     case "Ham":
                         from camera import Ham
                         device_instance = Ham()
-                        device_instance.start_acquisition()
                     case "Lucid":
                         from lucid import LucidCamera
                         device_instance = LucidCamera(max_tries=1, wait_time=1)
-                        device_instance.start_acquisition()
                     case "PM":
                         from photometrics import PyVCAM
                         device_instance = PyVCAM() 
-                        device_instance.start_acquisition()
                     case "IDS_Peak":
                         from peak import IDSPeakCamera
                         device_instance = IDSPeakCamera()
-                        device_instance.start_acquisition()
                     case "PI-mte3":
                         from pi_camera import PICamera                        
                         device_instance = PICamera()
-                        device_instance.start_acquisition()
                     case "VSY":
                         from new_vsy_camera import NewVSYCamera                     
                         device_instance = NewVSYCamera()
                     case "Galaxy":
                         from camera import GalaxyCamera                        
                         device_instance = GalaxyCamera()
-                        device_instance.start_acquisition()
                     case "QHY":
                         from QHY import QHYCamera
                         device_instance = QHYCamera()
                         device_instance.set_bit_depth(16)
-                        device_instance.start_acquisition()
                         
-
             elif self.device_type == 'stage':
                 match(self.device_name):
                     case "NewPort":
@@ -488,6 +479,7 @@ class LogicWindow(ModernUI):
         
         if success:
             self.camera = result
+            self.camera.start_acquisition()
             self.btn_open_cam.setText("已就绪")
             self.btn_open_cam.setStyleSheet("background-color: #4CAF50; color: white;")
             
