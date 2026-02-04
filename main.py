@@ -956,7 +956,7 @@ class LogicWindow(ModernUI):
         if not os.path.exists(self.save_dir):
             try:
                 os.makedirs(self.save_dir)
-                self.log_success(f"已创建目录: {self.save_dir}")
+                self.default_save_dir = self.save_dir
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"无法创建目录:\n{e}")
                 return False
@@ -1002,7 +1002,10 @@ class LogicWindow(ModernUI):
                     return
                 self.dark_frame = img_dark.astype(np.uint16)
                 self.log_success("暗场采集完成")
-                path_dark = os.path.join(self.save_dir, f"dark.tif")
+                raw_data_dir = os.path.join(self.save_dir, "raw_data")
+                if not os.path.exists(raw_data_dir):
+                    os.makedirs(raw_data_dir)
+                path_dark = os.path.join(raw_data_dir, "dark.tif")  
                 try:
                     if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
                         Image.fromarray(img_dark).save(path_dark)
@@ -1111,7 +1114,10 @@ class LogicWindow(ModernUI):
         self.image_view.update_image(img_data, show_mask=show_mask)
 
         frame_name = f"scan_{idx:03d}.tif"
-        path = os.path.join(self.save_dir, frame_name)
+        raw_data_dir = os.path.join(self.save_dir, "raw_data")
+        if not os.path.exists(raw_data_dir):
+            os.makedirs(raw_data_dir)
+        path = os.path.join(raw_data_dir, frame_name)
         try:
             # 直接保存 raw
             if img_data.dtype != np.uint8 and img_data.dtype != np.uint16:
