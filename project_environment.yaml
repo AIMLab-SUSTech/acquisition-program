@@ -1,0 +1,30 @@
+name: acquisition_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - h5py
+  - matplotlib
+  - pillow
+  - scipy
+  - pip
+  - pyusb
+  - pyserial
+  - pip:
+    - PyQt6
+    - opencv-python
+    - pylablib
+    - newportxps
+    - ids-peak
+    - ids-peak-ipl
+    - imagingcontrol4
+    - pyvcam
+    - pythonnet
+    # Local dependencies or manual installs might be needed for:
+    # - arena_api (Lucid cameras) - check dll/Galaxy/lucid/ for whl or install from vendor
+    # - Galaxy camera uses local dll/Galaxy/gxipy (included in project source)
+
+# 在power shell 中激活环境
+# conda env create -f project_environment.yaml --force

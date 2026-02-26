@@ -268,7 +268,7 @@ class ModernUI(QMainWindow):
         # ==========================================
         # 模块 1: 保存设置 (您要求的自成一块)
         # ==========================================
-        group_save = QGroupBox("保存设置")
+        group_save = QGroupBox("5. 保存设置")
         layout_save = QVBoxLayout()
         layout_save.setContentsMargins(10, 10, 10, 10)
 
