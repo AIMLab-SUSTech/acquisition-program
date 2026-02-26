@@ -154,6 +154,85 @@ class Ham(Camera):
             # 大多数滨松科学相机 (Flash 4.0等) 默认为 16-bit
             return 16
 
+class PCOCamera(Camera):
+    def __init__(self):
+        try:
+            self.cam = PCO.PCOSC2Camera()  # 初始化PCO相机
+            print("成功连接到PCO相机")
+        except Exception as e:
+            self.cam = None
+            print(f"PCO相机连接失败: {e}")
+
+    def set_ex_time(self, ex_time):
+        """设置曝光时间（单位：秒）"""
+        if self.cam is None:
+            return
+        try:
+            # self.cam.stop_acquisition()
+            self.cam.set_exposure(ex_time)
+            # self.cam.stop_acquisition()
+        except Exception as e:
+            print(f'PCO曝光时间设置失败：{e}')
+    
+    def get_ex_time(self):
+        try:
+            ex_time = self.cam.get_exposure()
+            if ex_time is not None:
+                return ex_time
+        except Exception as e:
+            print(f'PCO曝光时间读取失败：{e}')
+        
+    def snap(self):
+        """拍摄单帧"""
+        if self.cam is None:
+            return None
+        return self.cam.snap()
+
+    def start_acquisition(self):
+        """开始连续采集"""
+        if self.cam is None:
+            return
+        try:
+            self.cam.start_acquisition()
+        except Exception as e:
+            print(f'PCO开始采集失败：{e}')
+    
+    def stop_acquistion(self):
+        try:
+            self.cam.stop_acquisition()
+        except Exception as e:
+            print(f'PCO停止采集失败：{e}')
+
+    def wait_for_frame(self, nframes=1):
+        """等待指定帧数就绪"""
+        if self.cam is None:
+            return
+        self.cam.wait_for_frame(nframes=nframes)
+
+    def read_newest_image(self):
+        """获取最新帧图像"""
+        if self.cam is None:
+            return None
+        try:
+            image = self.cam.read_newest_image()
+            if image is None:
+                self.wait_for_frame(1)
+                image = self.cam.read_newest_image()
+            return image
+        except Exception as e:
+            print(f'PCO获取图像失败：{e}')
+            return None
+
+    def get_frame_period(self):
+        """获取帧周期（单位：秒）"""
+        if self.cam is None:
+            return 0
+        return self.cam.get_frame_period()
+
+    def close(self):
+        """关闭相机连接"""
+        if self.cam is not None:
+            self.cam.close()
 
 class Basler(Camera):
     def __init__(self):

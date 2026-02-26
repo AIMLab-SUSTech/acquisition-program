@@ -36,24 +36,27 @@ class DeviceLoader(QThread):
                         from camera import IDS
                         device_instance = IDS()
                         device_instance.set_pixel_rate(7e7)
+                    case "PCO":
+                        from camera import PCOCamera
+                        device_instance = PCOCamera()
                     case "Ham":
                         from camera import Ham
                         device_instance = Ham()
                     case "Lucid":
                         from lucid import LucidCamera
                         device_instance = LucidCamera(max_tries=1, wait_time=1)
-                    case "PM":
-                        from photometrics import PyVCAM
-                        device_instance = PyVCAM() 
-                    case "IDS_Peak":
-                        from peak import IDSPeakCamera
-                        device_instance = IDSPeakCamera()
-                    case "PI-mte3":
-                        from pi_camera import PICamera                        
-                        device_instance = PICamera()
-                    case "VSY":
-                        from new_vsy_camera import NewVSYCamera                     
-                        device_instance = NewVSYCamera()
+                    # case "PM":
+                    #     from photometrics import PyVCAM
+                    #     device_instance = PyVCAM() 
+                    # case "IDS_Peak":
+                    #     from peak import IDSPeakCamera
+                    #     device_instance = IDSPeakCamera()
+                    # case "PI-mte3":
+                    #     from pi_camera import PICamera                        
+                    #     device_instance = PICamera()
+                    # case "VSY":
+                    #     from new_vsy_camera import NewVSYCamera                     
+                    #     device_instance = NewVSYCamera()
                     case "Galaxy":
                         from camera import GalaxyCamera                        
                         device_instance = GalaxyCamera()

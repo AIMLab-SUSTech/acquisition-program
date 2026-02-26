@@ -131,7 +131,7 @@ class ModernUI(QMainWindow):
         g_dev = QGroupBox("1. 设备连接"); l_dev = QGridLayout()
         l_dev.setContentsMargins(5, 10, 5, 10)
         l_dev.addWidget(QLabel("相机:"), 0, 0)
-        self.combo_camera = self.mk_combo(["IDS", "Ham", "Lucid", "PM", "Galaxy"])
+        self.combo_camera = self.mk_combo(["IDS", "Ham", "Lucid", "PM", "Galaxy", "QHY", "PCO"])
         l_dev.addWidget(self.combo_camera, 0, 1)
         
         # [修复] 显式赋值给 self
