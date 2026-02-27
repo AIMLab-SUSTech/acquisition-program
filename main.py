@@ -663,7 +663,7 @@ class LogicWindow(ModernUI):
                 # 处理 Log 变换
                 if self.chk_log.isChecked():
                     # log(1+x) 变换，拉伸暗部细节
-                    img_disp = np.sqrt(2**self.bit_depth - 1) * np.sqrt(cropped_img).astype(np.uint16)
+                    img_disp = (np.sqrt(2**self.bit_depth - 1) * np.sqrt(cropped_img)).astype(np.uint16)
                     self.image_view.update_image(img_disp, show_mask)
                 else:
                     # 正常线性显示
