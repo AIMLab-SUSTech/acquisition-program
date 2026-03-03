@@ -76,8 +76,8 @@ class Scanner:
             # === 圆形/椭圆模式 ===
             # 1. 计算半轴长 (a: X轴半径, b: Y轴半径)
             # scan_range_x 是物理直径(mm)，所以除以2得到半径
-            a = self.scan_range_x / 2.0
-            b = self.scan_range_y / 2.0
+            a = self.scan_range_x / 2.00
+            b = self.scan_range_y / 2.00
             
             # 2. 确定最大扫描半径
             # 必须覆盖到椭圆的最长边，否则长轴方向扫不全
@@ -87,7 +87,7 @@ class Scanner:
             # 向上取整，确保能覆盖最边缘
             max_layers = int(math.ceil(max_r / self.step)) + 1
             
-            pos_absolute = [(0.0, 0.0)]
+            pos_absolute = [(0.00, 0.00)]
             
             for ir in range(1, max_layers):
                 rr = ir * self.step # 当前圆环的物理半径
@@ -116,8 +116,8 @@ class Scanner:
             nx, ny = max(1, nx), max(1, ny)
             
             center_x, center_y = nx // 2, ny // 2
-            x_offset = (nx - 1) * self.step / 2.0
-            y_offset = (ny - 1) * self.step / 2.0
+            x_offset = (nx - 1) * self.step / 2.00
+            y_offset = (ny - 1) * self.step / 2.00
             
             pos_absolute = []
             max_radius = max(center_x, center_y, nx - center_x - 1, ny - center_y - 1)
@@ -178,7 +178,7 @@ class Scanner:
             # 3. 黄金角 (保持您原有的参数逻辑)
             golden_angle = math.pi / self.nth
             
-            pos_absolute = [(0.0, 0.0)]
+            pos_absolute = [(0.00, 0.00)]
             i = 0
             while True:
                 i += 1
@@ -210,7 +210,7 @@ class Scanner:
             self.y.append(curr_y - prev_y)
             
         # 计算绝对坐标
-        current_x, current_y = 0.0, 0.0
+        current_x, current_y = 0.00, 0.00
         self.abs_x = []
         self.abs_y = []
         for dx, dy in zip(self.x, self.y):
@@ -342,10 +342,6 @@ def visualize_scan_path(scanner:Scanner, save_path=None, dpi=100):
                  length_includes_head=True,
                  head_width=0.3 * scanner.step,
                  head_length=0.5 * scanner.step)
-
-    # 绘制扫描点
-    scatter = ax.scatter(x, y, c=colors, cmap=cmap,
-                         s=50, zorder=3, edgecolor='w')
 
     # 标注起点和终点
     ax.scatter(x[0], y[0], s=200, marker='*',
