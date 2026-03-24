@@ -45,9 +45,9 @@ class DeviceLoader(QThread):
                     case "Lucid":
                         from lucid import LucidCamera
                         device_instance = LucidCamera(max_tries=1, wait_time=1)
-                    # case "PM":
-                    #     from photometrics import PyVCAM
-                    #     device_instance = PyVCAM() 
+                    case "PM":
+                        from photometrics import PyVCAM
+                        device_instance = PyVCAM()
                     # case "IDS_Peak":
                     #     from peak import IDSPeakCamera
                     #     device_instance = IDSPeakCamera()
@@ -104,7 +104,6 @@ class ScanWorker(QThread):
         self.scanner = scanner
         self.exposure_s = exposure_time_ms / 1000.0
         self.dark_frame = dark_frame
-        self.bit_depth = 16
         
         # 解包裁剪参数 (width, height, off_x, off_y)
         self.target_w, self.target_h, self.off_x, self.off_y = crop_params
@@ -376,6 +375,7 @@ class LogicWindow(ModernUI):
         self.dark_frame = None
         self.save_dir = self.default_save_dir
         self.pixel_size = 3.45e-3
+        self.bit_depth = 16
 
         # --- 3. 信号绑定 ---
         self.btn_open_cam.clicked.connect(self.start_init_camera)
@@ -482,13 +482,13 @@ class LogicWindow(ModernUI):
         
         if success:
             self.camera = result
+            # 1. 应用曝光
+            self.set_exposure_time()
             self.camera.start_acquisition()
             self.btn_open_cam.setText("已就绪")
             self.btn_open_cam.setStyleSheet("background-color: #4CAF50; color: white;")
             
             # --- 相机参数初始化逻辑 ---
-            # 1. 应用曝光
-            self.set_exposure_time()
 
             # 2. 获取位深
             try:
@@ -591,8 +591,8 @@ class LogicWindow(ModernUI):
             target_w = 1024
             target_h = 1024
 
-        if target_w >= w_full and target_h >= h_full:
-            self.log_info("ROI 大于等于图像尺寸，无需裁剪")
+        if target_w > w_full and target_h > h_full:
+            self.log_info("ROI 大于图像尺寸，无需裁剪")
             return full_image
 
         try:
@@ -653,6 +653,11 @@ class LogicWindow(ModernUI):
                     self.line_global_max.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
                 else:
                     self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
+                
+                #当前有多少像素超过饱和值
+                count = np.sum(cropped_img > limit)
+                self.line_saturation.setText(f"{count}")
+                self.line_saturation.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
 
                 # ==========================================
                 # 【恢复】 3. 处理 Log 显示和 Mask
@@ -1192,7 +1197,7 @@ class LogicWindow(ModernUI):
                     compression="gzip"  # 只有 numpy 数组才能支持压缩
                 )
                 f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
-                f.attrs['pixel_size'] = np.array([float(self.pixel_size)])
+                f.attrs['pixel_size'] = np.array([float(self.pixel_size.text())])
                 try:
                     ox = int(self.off_x.text())
                     oy = int(self.off_y.text())
@@ -1212,11 +1217,15 @@ class LogicWindow(ModernUI):
                     rw = int(dp_arr.shape[2]) if dp_arr.ndim >= 3 else 0
                 f.attrs['detector_size'] = np.array([rw, rh])
                 f.attrs['exposure_time'] = np.array([float(self.exposure_spin.value())])
-                
+                f.attrs['scan_method'] = np.array([self.combo_scan_mode.currentText().encode('utf-8')])
+                f.attrs['scan_range'] = np.array([float(self.scan_range_x.text()), float(self.scan_range_y.text())])
+                f.attrs['scan_step'] = np.array([float(self.scan_step.text())]) 
+
+                #暂时有问题
+                # f.attrs['binning_number'] = np.array([int(self.combo_sampling.currentText().split()[0])])
                 # 4. 其他属性
                 # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
-                f.attrs['total_frames'] = dp_arr.shape[0] 
-                f.attrs['timestamp'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                # f.attrs['array_size'] = dp_arr.shape[0] 
 
         except Exception as e:
             self.log_error(f"H5 保存失败: {e}")
@@ -1235,8 +1244,12 @@ class LogicWindow(ModernUI):
             self.save_dir = path
 
     def on_manual_save(self):
-        """响应'保存'按钮：保存当前视图为 tif"""
+        """响应'保存'按钮：保存当前视图为 tif 并写入 h5"""
         if not self.confirm_directory():
+            return
+        
+        if not self.camera:
+            self.log_error("相机未连接")
             return
         
         default_name = f"image_{time.strftime('%H%M%S')}"
@@ -1246,13 +1259,95 @@ class LogicWindow(ModernUI):
         
         if ok and filename.strip():
             final_name = filename.strip()
+
+            if self.dark_frame is None:
+                confirm = QMessageBox.question(
+                    self, 
+                    "暗场检查",                 # <--- 这里是标题 (Title)
+                    "是否采集当前环境的暗场？",   # <--- 这里是内容 (Text)
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if confirm == QMessageBox.StandardButton.Yes:
+                    img_dark = self.camera.read_newest_image()
+                    if img_dark is None:
+                        self.log_error("暗场采集失败：无法获取图像")
+                        return
+                    img_dark = self.crop_image(img_dark)
+                    if img_dark is None:
+                        self.log_error("暗场采集失败：图像裁剪失败") 
+                        return
+                    self.dark_frame = img_dark.astype(np.uint16)
+                    self.log_success("暗场采集完成")
+                    raw_data_dir = os.path.join(self.save_dir, "raw_data")
+                    if not os.path.exists(raw_data_dir):
+                        os.makedirs(raw_data_dir)
+                    path_dark = os.path.join(raw_data_dir, "dark.tif")  
+                    try:
+                        if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
+                            Image.fromarray(img_dark).save(path_dark)
+                        else:
+                            Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
+                    except Exception as e:
+                        self.log_error(f"暗场保存失败: {e}")
+                else:
+                    self.log_info("采集已取消")
+                    return
             
-            # 1. 调用通用函数保存 TIF，并获取数据 (save_current_frame只负责保存TIF和返回数据)
-            img_data = self.save_current_frame(base_name=final_name)
-            
-            if img_data is None:
-                self.log_error("无法获取图像数据，保存中止")
-                return
+            if self.dark_frame is not None:
+                confirm = QMessageBox.question(
+                self, 
+                "采集检查",                 # <--- 这里是标题 (Title)
+                "是否采集？",   # <--- 这里是内容 (Text)
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+                )
+                if confirm == QMessageBox.StandardButton.Yes:
+                    pass
+                else:
+                    self.log_info("采集已取消")
+                    return
+
+                roi_img, cur_x, cur_y = self.save_current_frame(base_name=final_name)
+                save_img = roi_img - img_dark
+                if roi_img is not None:
+                    with h5py.File(os.path.join(self.save_dir,  final_name + ".h5"), 'a') as f:
+                        if "data" in f:
+                            del f["data"]
+                        f.create_dataset(
+                            "data", 
+                            data = save_img,        # 使用转换后的 numpy 数组
+                            compression="gzip"  # 只有 numpy 数组才能支持压缩
+                        )
+                        f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
+                        f.attrs['pixel_size'] = np.array([float(self.pixel_size)])
+                        try:
+                            ox = int(self.off_x.text())
+                            oy = int(self.off_y.text())
+                        except:
+                            try:
+                                ox = int(self.off_x.value())
+                                oy = int(self.off_y.value())
+                            except:
+                                ox, oy = 0, 0
+                        f.attrs['offset_x'] = np.array([float(ox)])
+                        f.attrs['offset_y'] = np.array([float(oy)])
+                        try:
+                            rw = int(self.roi_w.text())
+                            rh = int(self.roi_h.text())
+                        except:
+                            rh = int(dp_arr.shape[1]) if dp_arr.ndim >= 2 else 0
+                            rw = int(dp_arr.shape[2]) if dp_arr.ndim >= 3 else 0
+                        f.attrs['detector_size'] = np.array([rw, rh])
+                        f.attrs['exposure_time'] = np.array([float(self.exposure_spin.value())])
+                        f.attrs['binning_number'] = np.array([int(self.combo_sampling.currentText().split()[0])])
+
+                        # 4. 其他属性
+                        # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
+                        f.attrs['total_frames'] = dp_arr.shape[0] 
+                else:
+                    self.log_error("无法获取图像数据，保存中止")
+                    return
         else:
             self.log_info("保存已取消")
 

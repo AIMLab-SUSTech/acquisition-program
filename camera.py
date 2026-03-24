@@ -1,5 +1,5 @@
 import numpy as np
-from pylablib.devices import uc480, DCAM
+from pylablib.devices import uc480, DCAM, PCO
 from abc import ABC, abstractmethod
 import time
 import os

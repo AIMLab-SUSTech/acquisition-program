@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGroupBox, QFormLayout, QLabel, QLineEdit, QPushButton, 
                              QComboBox, QCheckBox, QDoubleSpinBox, QTabWidget, QGridLayout, 
                              QFrame, QPlainTextEdit, QSizePolicy)
+from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 
 # ==========================================
@@ -15,6 +16,76 @@ STYLE_IMG_BG = "background-color: #202020; border: 1px solid #555;"
 STYLE_TEXT_GRAY = "color: #666; font-size: 20px;"
 STYLE_VAL_RED = "color: red; font-weight: bold; background: #f0f0f0;"
 STYLE_VAL_BLUE = "color: blue; font-weight: bold; background: #f0f0f0;"
+
+
+class CustomTitleBar(QWidget):
+    def __init__(self, parent=None, title_text=""):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.setFixedHeight(32) # 设置标题栏高度
+        
+        # 标题栏背景色（可自行修改）
+        self.setStyleSheet("background-color: #f3f3f3; color: white;") 
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5,0,0,0)
+        layout.setSpacing(0)
+        
+        self.left_spacer = QWidget()
+        self.left_spacer.setFixedWidth(135) # 预留和右侧三个按钮差不多的宽度
+        layout.addWidget(self.left_spacer)
+
+        # 居中且加粗的标题标签
+        self.title_label = QLabel("超快单次曝光多色相干成像系统")
+        title_font = QFont("Microsoft YaHei", 12)       # 字体大小为12
+        title_font.setBold(True)
+        self.title_label.setFont(title_font)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setStyleSheet("color: #333333; border: none;")
+        layout.addWidget(self.title_label, 1) # 权重为1，占据剩余空间
+
+        # 3. 右侧按钮组（模拟原生按钮）
+        self.btn_min = self._create_btn("—", "#333333", self.parent_window.showMinimized)
+        self.btn_max = self._create_btn("口", "#333333", self._toggle_max_restore)
+        self.btn_close = self._create_btn("✕", "white", self.parent_window.close, is_close=True)
+        
+        layout.addWidget(self.btn_min)
+        layout.addWidget(self.btn_max)
+        layout.addWidget(self.btn_close)
+
+    def _create_btn(self, text, color, slot, is_close=False):
+        btn = QPushButton(text)
+        btn.setFixedSize(45, 32)
+        style = f"""
+            QPushButton {{
+                border: none; background-color: transparent; font-size: 12px; color: {color if not is_close else '#333'};
+            }}
+            QPushButton:hover {{
+                background-color: {"#e81123" if is_close else "#e5e5e5"};
+                color: {"white" if is_close else "black"};
+            }}
+        """
+        btn.setStyleSheet(style)
+        btn.clicked.connect(slot)
+        return btn
+
+    def _toggle_max_restore(self):
+        if self.parent_window.isMaximized():
+            self.parent_window.showNormal()
+        else:
+            self.parent_window.showMaximized()
+
+    # --- 以下代码让窗口可以被拖动 ---
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.parent_window._old_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if hasattr(self.parent_window, '_old_pos'):
+            delta = event.globalPosition().toPoint() - self.parent_window._old_pos
+            self.parent_window.move(self.parent_window.pos() + delta)
+            self.parent_window._old_pos = event.globalPosition().toPoint()
+
 
 # ==========================================
 # 1. 增强版位移台控制
@@ -80,18 +151,40 @@ class StageControlWidget(QWidget):
         return b
 
 # ==========================================
-# 2. 主界面 (ModernUI) - 完整修复版 (取消懒加载)
+# 2. 主界面 (ModernUI) - 完整修复版
 # ==========================================
 class ModernUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("采集控制系统")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.resize(1280, 950)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
-        central = QWidget(); self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
-        main_layout.setContentsMargins(5, 5, 5, 5); main_layout.setSpacing(5)
+        central = QWidget()
+        self.setCentralWidget(central)
+        
+        # 全局垂直布局（包含自定义标题栏 + 你的主内容）
+        global_v_layout = QVBoxLayout(central)
+        global_v_layout.setContentsMargins(0, 0, 0, 0)
+        global_v_layout.setSpacing(0)
+
+        # 添加自定义标题栏
+        self.title_bar = CustomTitleBar(self, "超快单次曝光多色相干成像系统")
+        global_v_layout.addWidget(self.title_bar)
+
+        # --- 以下是你原来的主体界面逻辑 ---
+        content_widget = QWidget()
+        global_v_layout.addWidget(content_widget)
+        main_layout = QHBoxLayout(content_widget)
+        main_layout.setContentsMargins(10,10,10,10)
+        main_layout.setSpacing(10)
+        # self.setWindowTitle("超快单次曝光多色相干成像系统")
+        # self.resize(1280, 950)
+        # self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        # central = QWidget(); self.setCentralWidget(central)
+        # main_layout = QHBoxLayout(central)
+        # main_layout.setContentsMargins(5, 5, 5, 5); main_layout.setSpacing(10)
 
         # 左侧图像区
         self.image_area = QFrame(); self.image_area.setStyleSheet(STYLE_IMG_BG)
@@ -195,7 +288,7 @@ class ModernUI(QMainWindow):
         # 保存设置
         g_save = QGroupBox("保存设置"); l_save = QVBoxLayout(); l_save.setContentsMargins(10, 10, 10, 10)
         h_path = QHBoxLayout()
-        self.save_dir_edit = QLineEdit("change path..."); h_path.addWidget(self.save_dir_edit)
+        self.save_dir_edit = QLineEdit("please change this to your own path"); h_path.addWidget(self.save_dir_edit)
         self.btn_browse = QPushButton("..."); self.btn_browse.setFixedWidth(40); h_path.addWidget(self.btn_browse)
         l_save.addLayout(h_path); g_save.setLayout(l_save); layout.addWidget(g_save)
 
@@ -237,6 +330,11 @@ class ModernUI(QMainWindow):
         self.line_mouse_val = QLabel("0"); self.line_mouse_val.setStyleSheet(STYLE_VAL_BLUE)
         self.line_mouse_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         f.addRow("鼠标Val:", self.line_mouse_val)
+
+        self.line_saturation = QLabel("0"); self.line_saturation.setStyleSheet(STYLE_VAL_RED)
+        self.line_saturation.setAlignment(Qt.AlignmentFlag.AlignRight)
+        f.addRow("饱和像素数:", self.line_saturation)
+
         g.setLayout(f); return g
 
     def create_big_btns(self):

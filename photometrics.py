@@ -4,11 +4,9 @@ from abc import ABC
 import numpy as np
 
 # 需要安装 pyvcam： pip install PyVCAM
-from pyvcam import pvc
 from pyvcam.camera import Camera as PyVcamCamera
-from camera import Camera
 
-class PyVCAM(Camera):
+class PyVCAM():
     def __init__(self, cam_name: str = None, default_ex_time_s: float = 0.02):
         """
         cam_name: 可选，相机的名字（如 'PMUSBCam00'），不指定则使用detect第一个相机
@@ -58,6 +56,10 @@ class PyVCAM(Camera):
         except Exception:
             # 不要因为设置失败而中断；直接在后续的 get_frame/start_live 时传 exp_time
             pass
+
+    def set_frame_period(self, period):
+        # period : 帧率
+        self.cam.set_frame_info_period(period)
 
 
     def start_acquisition(self):
