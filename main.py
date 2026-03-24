@@ -263,7 +263,7 @@ class InteractiveImageView(QGraphicsView):
 
     def update_image(self, image_data, show_mask=False):
         # ===========================
-        # 1. 显示底图 (保持不变) 可能有问题
+        # 1. 显示底图 (保持不变)   
         # ===========================
         self.np_img = image_data
         if image_data.dtype == np.uint16:
@@ -655,7 +655,7 @@ class LogicWindow(ModernUI):
                     self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
                 
                 #当前有多少像素超过饱和值
-                count = np.sum(cropped_img > limit)
+                count = np.sum(np.array(cropped_img) >= limit)
                 self.line_saturation.setText(f"{count}")
                 self.line_saturation.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
 
@@ -702,7 +702,7 @@ class LogicWindow(ModernUI):
             
             # 更新按钮样式
             self.btn_live.setText("👁 启动")
-            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;height: 45px;")
             self.log_info("实时显示已停止")
             
         else:
@@ -715,7 +715,7 @@ class LogicWindow(ModernUI):
             
             # 更新按钮样式
             self.btn_live.setText("⬛ 停止")
-            self.btn_live.setStyleSheet("background:#7f8c8d;color:white;font-weight:bold;")
+            self.btn_live.setStyleSheet("background:#7f8c8d;color:white;font-weight:bold;height: 45px;")
             self.log_success("实时显示已启动")
 
     def calculate_center(self): #todo
@@ -1080,7 +1080,7 @@ class LogicWindow(ModernUI):
             self.timer.stop()
             self.is_live = False
             self.btn_live.setText("🟢 启动")
-            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;")
+            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold; height: 45px;")
             self.was_live_before_scan = True
             self.log_info("为保证采集稳定,已暂停实时显示")
             
