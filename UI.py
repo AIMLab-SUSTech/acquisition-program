@@ -195,7 +195,7 @@ class ModernUI(QMainWindow):
         # 保存设置
         g_save = QGroupBox("保存设置"); l_save = QVBoxLayout(); l_save.setContentsMargins(10, 10, 10, 10)
         h_path = QHBoxLayout()
-        self.save_dir_edit = QLineEdit("change path..."); h_path.addWidget(self.save_dir_edit)
+        self.save_dir_edit = QLineEdit("please change this to your own path"); h_path.addWidget(self.save_dir_edit)
         self.btn_browse = QPushButton("..."); self.btn_browse.setFixedWidth(40); h_path.addWidget(self.btn_browse)
         l_save.addLayout(h_path); g_save.setLayout(l_save); layout.addWidget(g_save)
 

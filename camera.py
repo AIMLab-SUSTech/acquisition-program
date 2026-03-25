@@ -1,5 +1,5 @@
 import numpy as np
-from pylablib.devices import uc480, DCAM
+from pylablib.devices import uc480, DCAM, PCO
 from abc import ABC, abstractmethod
 import time
 import os
@@ -29,7 +29,6 @@ class Camera(ABC):
     def get_frame_period(self):
         """获取帧率，返回：S"""
         pass
-
 
 class IDS(Camera):
     def __init__(self):
