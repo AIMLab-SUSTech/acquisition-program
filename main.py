@@ -38,41 +38,7 @@ class DeviceLoader(QThread):
                         device_instance.set_pixel_rate(7e7)
                     case "PCO":
                         from camera import PCOCamera
-                        device_instance = PCOCamera()
-                    # case "Ham":
-                    #     from camera import Ham
-                    #     device_instance = Ham()
-                    # case "Lucid":
-                    #     from lucid import LucidCamera
-                    #     device_instance = LucidCamera(max_tries=1, wait_time=1)
-                    # case "PM":
-                    #     from photometrics import PyVCAM
-                    #     device_instance = PyVCAM()
-                    # case "Ham":
-                    #     from camera import Ham
-                    #     device_instance = Ham()
-                    # case "Lucid":
-                    #     from lucid import LucidCamera
-                    #     device_instance = LucidCamera(max_tries=1, wait_time=1)
-                    # case "PM":
-                    #     from photometrics import PyVCAM
-                    #     device_instance = PyVCAM()
-                    # case "IDS_Peak":
-                    #     from peak import IDSPeakCamera
-                    #     device_instance = IDSPeakCamera()
-                    # case "PI-mte3":
-                    #     from pi_camera import PICamera                        
-                    #     device_instance = PICamera()
-                    # case "VSY":
-                    #     from new_vsy_camera import NewVSYCamera                     
-                    #     device_instance = NewVSYCamera()
-                    case "Galaxy":
-                        from camera import GalaxyCamera                        
-                        device_instance = GalaxyCamera()
-                    case "QHY":
-                        from QHY import QHYCamera
-                        device_instance = QHYCamera()
-                        device_instance.set_bit_depth(16)
+                        device_instance = PCOCamera()   
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -80,13 +46,6 @@ class DeviceLoader(QThread):
                         from motion_controller import xps
                         device_instance = xps(IP='192.168.0.254')
                         device_instance.init_groups(['Group3', 'Group4'])
-                    # case "Nators":
-                    #     from motion_controller import nators
-                    #     device_instance = nators(ip_address="192.168.0.254")
-                    #     device_instance.open_system()
-                    # case "SmartAct":
-                    #     from motion_controller import smartact
-                    #     device_instance = smartact()
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
