@@ -224,7 +224,7 @@ class ModernUI(QMainWindow):
         g_dev = QGroupBox("1. 设备连接"); l_dev = QGridLayout()
         l_dev.setContentsMargins(5, 10, 5, 10)
         l_dev.addWidget(QLabel("相机:"), 0, 0)
-        self.combo_camera = self.mk_combo(["IDS", "Ham", "Lucid", "PM", "Galaxy", "QHY", "PCO"])
+        self.combo_camera = self.mk_combo(["PCO","IDS", "Ham", "Lucid", "PM", "QHY"])
         l_dev.addWidget(self.combo_camera, 0, 1)
         
         # [修复] 显式赋值给 self
@@ -331,10 +331,9 @@ class ModernUI(QMainWindow):
         self.line_mouse_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         f.addRow("鼠标Val:", self.line_mouse_val)
 
-        self.line_saturation = QLabel("0"); self.line_saturation.setStyleSheet(STYLE_VAL_RED)
+        self.line_saturation = QLabel("0");self.line_saturation.setStyleSheet(STYLE_VAL_RED)
         self.line_saturation.setAlignment(Qt.AlignmentFlag.AlignRight)
         f.addRow("饱和像素数:", self.line_saturation)
-
         g.setLayout(f); return g
 
     def create_big_btns(self):
