@@ -331,10 +331,9 @@ class ModernUI(QMainWindow):
         self.line_mouse_val.setAlignment(Qt.AlignmentFlag.AlignRight)
         f.addRow("鼠标Val:", self.line_mouse_val)
 
-        self.line_saturation = QLabel("0"); self.line_saturation.setStyleSheet(STYLE_VAL_RED)
+        self.line_saturation = QLabel("0");self.line_saturation.setStyleSheet(STYLE_VAL_RED)
         self.line_saturation.setAlignment(Qt.AlignmentFlag.AlignRight)
         f.addRow("饱和像素数:", self.line_saturation)
-
         g.setLayout(f); return g
 
     def create_big_btns(self):
