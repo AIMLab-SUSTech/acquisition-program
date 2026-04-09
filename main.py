@@ -1273,7 +1273,8 @@ class LogicWindow(ModernUI):
                     return
                      
             roi_img, cur_x, cur_y = self.save_current_frame(base_name=final_name)
-            save_img = roi_img - self.cmi_dark
+            save_img = roi_img.astype(np.float32) - self.cmi_dark.astype(np.float32)
+            save_img = np.clip(save_img, 0, 65535).astype(np.uint16)
             save_path = os.path.join(self.save_dir,final_name)
 
             if roi_img is not None:
