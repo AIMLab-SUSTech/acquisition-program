@@ -263,8 +263,8 @@ class ModernUI(QMainWindow):
         # 4. ROI
         g_roi = QGroupBox("4. 采集区域与偏移"); l_roi = QGridLayout()
         h_sz = QHBoxLayout()
-        self.roi_w = QLineEdit("1024"); self.roi_w.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.roi_h = QLineEdit("1024"); self.roi_h.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.roi_w = QLineEdit("2048"); self.roi_w.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.roi_h = QLineEdit("2048"); self.roi_h.setAlignment(Qt.AlignmentFlag.AlignRight)
         h_sz.addWidget(self.roi_w); h_sz.addWidget(QLabel("x")); h_sz.addWidget(self.roi_h)
         l_roi.addWidget(QLabel("Size W/H:"), 0, 0); l_roi.addLayout(h_sz, 0, 1)
         
