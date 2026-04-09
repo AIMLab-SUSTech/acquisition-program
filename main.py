@@ -1240,11 +1240,11 @@ class LogicWindow(ModernUI):
             result = msg.exec()
 
             if result == QMessageBox.StandardButton.Yes:
-                self.cmi_dark = self.camera.read_newest_image()
+                cmi_dark = self.camera.read_newest_image()
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：无法获取图像")
                     return
-                self.cmi_dark = self.crop_image(self.cmi_dark)
+                self.cmi_dark = self.crop_image(cmi_dark)
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：图像裁剪失败") 
                     return
@@ -1271,8 +1271,7 @@ class LogicWindow(ModernUI):
                 if reply == QMessageBox.StandardButton.No:
                     self.log_info("采集已取消")
                     return
-                    
-                    
+                     
             roi_img, cur_x, cur_y = self.save_current_frame(base_name=final_name)
             save_img = roi_img - self.cmi_dark
             save_path = os.path.join(self.save_dir,final_name)
@@ -1284,7 +1283,6 @@ class LogicWindow(ModernUI):
                     f.create_dataset(
                         "data", 
                         data = save_img,        # 使用转换后的 numpy 数组
-                        compression="gzip"  # 只有 numpy 数组才能支持压缩
                     )
                     f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
                     f.attrs['pixel_size'] = np.array([float(self.pixel_size)])
