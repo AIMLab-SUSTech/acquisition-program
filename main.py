@@ -45,7 +45,7 @@ class DeviceLoader(QThread):
                     case "NewPort":
                         from motion_controller import xps
                         device_instance = xps(IP='192.168.0.254')
-                        device_instance.init_groups(['Group3', 'Group4'])
+                        device_instance.init_groups(['Group1', 'Group2'])
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
@@ -339,7 +339,7 @@ class LogicWindow(ModernUI):
         self.is_live = False
         self.last_mouse_x = 0
         self.last_mouse_y = 0
-        self.image_view.mouse_hover_signal.connect(self.on_mouse_moved)
+        # self.image_view.mouse_hover_signal.connect(self.on_mouse_moved)
         self.default_save_dir = "please change this to your own path"
         self.dark_frame = None
         self.cmi_dark = None
@@ -417,21 +417,21 @@ class LogicWindow(ModernUI):
         scrollbar = self.txt_log.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
-    def on_mouse_moved(self, x, y, val):
-        if x >= 0 and y >= 0:
-            self.last_mouse_x = x
-            self.last_mouse_y = y
-            self.update_pixel_display(val)
+    # def on_mouse_moved(self, x, y, val):
+    #     if x >= 0 and y >= 0:
+    #         self.last_mouse_x = x
+    #         self.last_mouse_y = y
+            # self.update_pixel_display(val)
 
-    def update_pixel_display(self, val):
-        if val is None: return 
+    # def update_pixel_display(self, val):
+    #     if val is None: return 
         
-        self.line_mouse_val.setText(f"{val}")
+    #     self.line_mouse_val.setText(f"{val}")
         
-        if val >= self.saturation_value:
-            self.line_mouse_val.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
-        else:
-            self.line_mouse_val.setStyleSheet("color: blue; font-weight: bold; background: #f0f0f0;")
+    #     if val >= self.saturation_value:
+    #         self.line_mouse_val.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
+    #     else:
+    #         self.line_mouse_val.setStyleSheet("color: blue; font-weight: bold; background: #f0f0f0;")
 
     # --- 异步加载设备 ---
     def start_init_camera(self):
@@ -627,6 +627,9 @@ class LogicWindow(ModernUI):
                 count = np.sum(np.array(cropped_img) >= limit)
                 self.line_saturation.setText(f"{count}")
                 self.line_saturation.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
+
+                self.total_photons.setText(f"{np.sum(cropped_img)}")
+                self.total_photons.setStyleSheet("color: blue; font-weight: bold; background: #f0f0f0;")
 
                 # ==========================================
                 # 【恢复】 3. 处理 Log 显示和 Mask
@@ -1028,10 +1031,6 @@ class LogicWindow(ModernUI):
             
         crop_params_tuple = (w, h, ox, oy) # 打包成元组
 
-        self.dp = []
-        self.pos_x = []
-        self.pos_y = []
-
         # === 【修改】 实例化 Worker 时传入参数 ===
         self.worker = ScanWorker(
             camera=self.camera,
@@ -1240,11 +1239,11 @@ class LogicWindow(ModernUI):
             result = msg.exec()
 
             if result == QMessageBox.StandardButton.Yes:
-                cmi_dark = self.camera.read_newest_image()
+                self.cmi_dark = self.camera.read_newest_image()
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：无法获取图像")
                     return
-                self.cmi_dark = self.crop_image(cmi_dark)
+                self.cmi_dark = self.crop_image(self.cmi_dark)
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：图像裁剪失败") 
                     return
