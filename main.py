@@ -69,8 +69,7 @@ class DeviceLoader(QThread):
                     case "QHY":
                         from QHY import QHYCamera
                         device_instance = QHYCamera()
-                        device_instance.set_bit_depth(16)
-                        device_instance.start_acquisition()
+                        device_instance.set_bit_depth(16) 
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -656,9 +655,9 @@ class LogicWindow(ModernUI):
                 else:
                     self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
 
-                count = np.sum(np.array(cropped_img) >= limit)
-                self.line_saturation.setText(f"{count}")
-                self.line_saturation.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
+                # count = np.sum(np.array(cropped_img) >= limit)
+                # self.line_saturation.setText(f"{count}")
+                # self.line_saturation.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
 
                 # ==========================================
                 # 【恢复】 3. 处理 Log 显示和 Mask
@@ -1194,7 +1193,7 @@ class LogicWindow(ModernUI):
                     compression="gzip"  # 只有 numpy 数组才能支持压缩
                 )
                 f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
-                f.attrs['pixel_size'] = np.array([float(self.pixel_size.text())])
+                # f.attrs['pixel_size'] = np.array([float(self.pixel_size.text())]) 有问题
                 try:
                     ox = int(self.off_x.text())
                     oy = int(self.off_y.text())
@@ -1217,7 +1216,7 @@ class LogicWindow(ModernUI):
                 f.attrs['scan_method'] = np.array([self.combo_scan_mode.currentText().encode('utf-8')])
                 f.attrs['scan_range'] = np.array([float(self.scan_range_x.text()), float(self.scan_range_y.text())])
                 f.attrs['scan_step'] = np.array([float(self.scan_step.text())]) 
-                f.attrs['binning_number'] = np.array([int(self.combo_sampling.currentText().split()[0])])
+                # f.attrs['binning_number'] = np.array([int(self.combo_sampling.currentText().split()[0])]) 有问题
                 
                 # 4. 其他属性
                 # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
