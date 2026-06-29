@@ -39,33 +39,6 @@ class DeviceLoader(QThread):
                     case "PCO":
                         from camera import PCOCamera
                         device_instance = PCOCamera()   
-                    # case "Ham":
-                    #     from camera import Ham
-                    #     device_instance = Ham()
-                    #     device_instance.start_acquisition()
-                    # case "Lucid":
-                    #     from lucid import LucidCamera
-                    #     device_instance = LucidCamera(max_tries=1, wait_time=1)
-                    #     device_instance.start_acquisition()
-                    # case "PM":
-                    #     from photometrics import PyVCAM
-                    #     device_instance = PyVCAM() 
-                    #     device_instance.start_acquisition()
-                    # case "IDS_Peak":
-                    #     from peak import IDSPeakCamera
-                    #     device_instance = IDSPeakCamera()
-                    #     device_instance.start_acquisition()
-                    # case "PI-mte3":
-                    #     from pi_camera import PICamera                        
-                    #     device_instance = PICamera()
-                    #     device_instance.start_acquisition()
-                    # case "VSY":
-                    #     from new_vsy_camera import NewVSYCamera                     
-                    #     device_instance = NewVSYCamera()
-                    # case "Galaxy":
-                    #     from camera import GalaxyCamera                        
-                    #     device_instance = GalaxyCamera()
-                    #     device_instance.start_acquisition()
                     case "QHY":
                         from QHY import QHYCamera
                         device_instance = QHYCamera()
@@ -360,9 +333,6 @@ class LogicWindow(ModernUI):
         self.camera = None
         self.motion = None
         self.is_init = False
-        self.dp = []
-        self.pos_x = []
-        self.pos_y = [] 
         
         # 实时流定时器
         self.timer = QTimer()
@@ -1028,7 +998,7 @@ class LogicWindow(ModernUI):
         if self.dark_frame is not None:
             confirm = QMessageBox.question(
                 self, 
-                "采集检查",                 # <--- 这里是标题 (Title)
+                "采集检查",        # <--- 这里是标题 (Title)
                 "是否开始采集？",   # <--- 这里是内容 (Text)
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes
@@ -1105,14 +1075,8 @@ class LogicWindow(ModernUI):
         """
         处理子线程发来的图像更新信号
         ScanWorker.update_signal -> (img_data, cur_x, cur_y, idx)
-        此函数替代了原本未使用的 on_scan_step_received
-        """
-        # 1. 将数据存入内存列表 (这是最关键的一步，否则最后保存为空)
-        self.dp.append(img_data)
-        self.pos_x.append(cur_x)
-        self.pos_y.append(cur_y)
-        
-        # 2. 更新界面图像显示
+        """     
+        # 更新界面图像显示
         # 检查是否需要显示 Mask (十字准星)
         show_mask = self.chk_mask.isChecked()
         self.image_view.update_image(img_data, show_mask=show_mask)
@@ -1131,14 +1095,11 @@ class LogicWindow(ModernUI):
             Image.fromarray(save_data).save(path)
         except Exception as e:
             print(f"单帧保存失败: {e}")
+        
+        # 写入 H5
+        self._write_scan_to_h5(img_data, cur_x, cur_y)
 
     def _scan_finished(self):
-        self.log_info("扫描线程结束，正在写入 H5...")
-        
-        self.dark_frame = None
-
-        # 写入 H5
-        self._write_scan_to_h5(self.dp, self.pos_x, self.pos_y)
         self.log_success("H5 文件写入完成！")
         
         # 回到原点
@@ -1151,47 +1112,74 @@ class LogicWindow(ModernUI):
             self.log_info("自动恢复实时显示...")
             self.toggle_live() # 直接调用 toggle 函数重新启动
 
-    def _write_scan_to_h5(self,dp, pos_x, pos_y, h5_path=None):
+        self.btn_cap.setEnabled(True)  # 锁定按钮
+        self.btn_cap.setText("🔴 采集")
+        self.btn_cap.setStyleSheet("background:#e74c3c;color:white;font-weight:bold;height: 45px;")
+
+    def _write_scan_to_h5(self, img_data, cur_x, cur_y, h5_path=None):
         """
-        将当前扫描数据写入 H5 文件。(dp, pos_x, pos_y, wl)
+        将当前扫描数据写入 H5 文件。(img_data, cur_x, cur_y, wl)
         """
+        if os.path.exists(h5_path):
+            reply= QMessageBox.question(
+                self,
+                "确认追加写入",
+                f"文件已存在：\n{h5_path}\n\n确认追加写入吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No       # 默认选中 No，防止误操作
+            )
+            return reply == QMessageBox.No
+        
         if not h5_path:
             h5_path = os.path.join(self.save_dir, "raw_data", self.current_scan_h5_name)
         try:
             os.makedirs(os.path.dirname(h5_path), exist_ok=True)
         except:
-            pass
-        
+            self.log_error(f"创建目录失败: {h5_path}")
+            return
+
+        # --- 将 Data 写入 H5 ---
+        frame = np.array(img_data, dtype=np.uint16)   # (H, W)
+        x_val = np.array([cur_x], dtype=np.float64)   # (1,)
+        y_val = np.array([cur_y], dtype=np.float64)   # (1,)
+
         try:  
-                # --- 将 Data 写入 H5 ---
-            dp_arr = np.array(dp, dtype=np.uint16)       
-            pos_x = np.array(pos_x)
-            pos_y = np.array(pos_y)
+            with h5py.File(h5_path, 'a') as f:
+                if "data" not in f:    
+                    H, W = frame.shape
+                    f.create_dataset(
+                        "data",
+                        data=frame[np.newaxis],          # shape (1, H, W)
+                        maxshape=(None, H, W),           # 第 0 轴无限扩展
+                        compression="gzip",
+                        chunks=(1, H, W),                # 按帧分块，追加高效
+                    )
+                    f.create_dataset(
+                        "x",
+                        data=x_val,                      # shape (1,)
+                        maxshape=(None,),
+                        compression="gzip",
+                        chunks=(1,),
+                    )
+                    f.create_dataset(
+                        "y",
+                        data=y_val,
+                        maxshape=(None,),
+                        compression="gzip",
+                        chunks=(1,),
+                    )
+                else:
+                    n = f["data"].shape[0]               # 当前帧数
 
-            with h5py.File(h5_path, 'a') as f:    
-                if "data" in f:
-                    del f["data"]
-                if "x" in f:
-                    del f["x"]
-                if "y" in f:
-                    del f["y"]
+                    f["data"].resize(n + 1, axis=0)
+                    f["data"][n] = frame
 
-                # 1. 写入图像数据
-                f.create_dataset(
-                    "data", 
-                    data=dp_arr,        # 使用转换后的 numpy 数组
-                    compression="gzip"  # 只有 numpy 数组才能支持压缩
-                )             
-                f.create_dataset(
-                    "x", 
-                    data=pos_x,        # 使用转换后的 numpy 数组
-                    compression="gzip"  # 只有 numpy 数组才能支持压缩
-                )
-                f.create_dataset(
-                    "y", 
-                    data=pos_y,        # 使用转换后的 numpy 数组
-                    compression="gzip"  # 只有 numpy 数组才能支持压缩
-                )
+                    f["x"].resize(n + 1, axis=0)
+                    f["x"][n] = cur_x
+
+                    f["y"].resize(n + 1, axis=0)
+                    f["y"][n] = cur_y
+
                 f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
                 # f.attrs['pixel_size'] = np.array([float(self.pixel_size.text())]) 有问题
                 try:
