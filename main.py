@@ -47,7 +47,7 @@ class DeviceLoader(QThread):
                 match(self.device_name):
                     case "NewPort":
                         from motion_controller import xps
-                        device_instance = xps(IP='192.168.0.254')
+                        device_instance = xps(IP='192.168.254.254')
                         device_instance.init_groups(['Group1', 'Group2'])
 
             if device_instance:
@@ -238,10 +238,14 @@ class InteractiveImageView(QGraphicsView):
         # 1. 显示底图 (保持不变) 可能有问题
         # ===========================
         self.np_img = image_data
-        if image_data.dtype == np.uint16:
-            display_data = image_data.astype(np.uint16) << 4
-        else:
-            display_data = image_data.astype(np.uint16) << 4
+        max_val = np.max(image_data)
+        unique_vals = np.unique(image_data)
+        unique_count = len(unique_vals)
+        try:
+            if max_val < 4096 and unique_count <= 4096:
+                display_data = image_data.astype(np.uint16) << 4
+        except:
+            self.log_error("hik相机显示移位错误")
 
         h, w = display_data.shape
         qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16)
@@ -307,6 +311,13 @@ class InteractiveImageView(QGraphicsView):
             else:
                 self.mouse_hover_signal.emit(-1, -1, 0)
         super().mouseMoveEvent(event)
+
+    def log_error(self, msg):
+        """错误日志 - 红色"""
+        timestamp = time.strftime("%H:%M:%S")
+        html = f"<span style='color:#F44336;'><b>[{timestamp}]</b> ❌ {msg}</span>"
+        self.txt_log.appendHtml(html)
+        self._scroll_to_bottom()
 
 # =========================================================
 #  主逻辑窗口
@@ -424,7 +435,7 @@ class LogicWindow(ModernUI):
     #     if x >= 0 and y >= 0:
     #         self.last_mouse_x = x
     #         self.last_mouse_y = y
-            # self.update_pixel_display(val)
+    #         self.update_pixel_display(val)
 
     # def update_pixel_display(self, val):
     #     if val is None: return 
@@ -656,7 +667,7 @@ class LogicWindow(ModernUI):
                 if 0 <= self.last_mouse_x < w and 0 <= self.last_mouse_y < h:
                     # 从【原始数据】中取出值 (即使在 Log 模式下，也显示原始光子数)
                     current_val = cropped_img[self.last_mouse_y, self.last_mouse_x]
-                    self.update_pixel_display(current_val)
+                    # self.update_pixel_display(current_val)
                 else:
                     # 越界重置
                     self.last_mouse_x = w // 2
