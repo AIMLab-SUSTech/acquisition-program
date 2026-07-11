@@ -39,7 +39,7 @@ class DeviceLoader(QThread):
                     case "PCO":
                         from camera import PCOCamera
                         device_instance = PCOCamera()
-                    case "Hikrobot":   # <--- 添加这一分支
+                    case "Hikrobot":   
                         from hik import HikrobotCamera
                         device_instance = HikrobotCamera()   
                         
