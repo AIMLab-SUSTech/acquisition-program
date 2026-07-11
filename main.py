@@ -43,13 +43,16 @@ class DeviceLoader(QThread):
                         from QHY import QHYCamera
                         device_instance = QHYCamera()
                         device_instance.set_bit_depth(16) 
+                    case "Hik":
+                        from hik import HikrobotCamera
+                        device_instance = HikrobotCamera()
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
                     case "NewPort":
                         from motion_controller import xps
-                        device_instance = xps(IP='192.168.0.254')
-                        device_instance.init_groups(['Group3', 'Group4'])
+                        device_instance = xps(IP='192.168.254.254')
+                        device_instance.init_groups(['Group1', 'Group2'])
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
@@ -239,10 +242,20 @@ class InteractiveImageView(QGraphicsView):
         # 显示图像
         # ===========================
         self.np_img = image_data
+        max_val = np.max(image_data)
+        unique_vals = np.unique(image_data)
+        unique_count = len(unique_vals)
         if image_data.dtype == np.uint16:
             display_data = image_data.astype(np.uint16)
         else:
             display_data = image_data.astype(np.uint16) << 4
+
+        try:
+            if max_val < 4096 and unique_count <= 4096:
+                display_data = display_data.astype(np.uint16) << 4
+        except:
+            self.log_signal.emit(f"显示图像错误: {e}", "error")
+            return
 
         h, w = display_data.shape
         qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16)
