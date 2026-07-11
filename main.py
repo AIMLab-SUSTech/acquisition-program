@@ -38,7 +38,10 @@ class DeviceLoader(QThread):
                         device_instance.set_pixel_rate(7e7)
                     case "PCO":
                         from camera import PCOCamera
-                        device_instance = PCOCamera()   
+                        device_instance = PCOCamera()
+                    case "Hikrobot":   # <--- 添加这一分支
+                        from hik import HikrobotCamera
+                        device_instance = HikrobotCamera()   
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -236,7 +239,7 @@ class InteractiveImageView(QGraphicsView):
         # ===========================
         self.np_img = image_data
         if image_data.dtype == np.uint16:
-            display_data = image_data.astype(np.uint16)
+            display_data = image_data.astype(np.uint16) << 4
         else:
             display_data = image_data.astype(np.uint16) << 4
 

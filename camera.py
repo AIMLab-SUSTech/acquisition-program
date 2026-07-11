@@ -30,7 +30,6 @@ class Camera(ABC):
         """获取帧率，返回：S"""
         pass
 
-
 class IDS(Camera):
     def __init__(self):
         # self.cam = uc480.UC480Camera(backend='ueye')
@@ -537,6 +536,8 @@ class GalaxyCamera(Camera):
 
     def __del__(self):
         self.close()
+
+    
 
 if __name__ == '__main__':
     # camera = Camera()
