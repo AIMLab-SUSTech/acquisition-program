@@ -236,7 +236,7 @@ class InteractiveImageView(QGraphicsView):
 
     def update_image(self, image_data, show_mask=False):
         # ===========================
-        # 1. 显示底图 (保持不变) 可能有问题
+        # 显示图像
         # ===========================
         self.np_img = image_data
         if image_data.dtype == np.uint16:
@@ -256,10 +256,8 @@ class InteractiveImageView(QGraphicsView):
             self.pixmap_item.setPixmap(pix)
 
         # ===========================
-        # 2. 核心修复：Mask 绘制逻辑
+        # Mask 绘制
         # ===========================
-        
-        # --- 第一步：清理战场 ---
         if getattr(self, 'v_line', None): 
             self.scene.removeItem(self.v_line)
             self.v_line = None
@@ -346,7 +344,7 @@ class LogicWindow(ModernUI):
         self.cmi_dark = None
         self.save_dir = self.default_save_dir
         self.pixel_size = 3.45e-3
-        self.bit_depth = 16
+        self.bit_depth = None
 
         # --- 3. 信号绑定 ---
         self.btn_open_cam.clicked.connect(self.start_init_camera)
@@ -383,7 +381,7 @@ class LogicWindow(ModernUI):
         self.log_error(header + "\n" + error_msg)
 
     # =====================================================
-    # 【新增】改进的日志函数
+    # 改进的日志函数
     # =====================================================
     def log_info(self, msg):
         """信息日志 - 蓝色"""
@@ -460,7 +458,6 @@ class LogicWindow(ModernUI):
             self.btn_open_cam.setStyleSheet("background-color: #4CAF50; color: white;")
             
             # --- 相机参数初始化逻辑 ---
-
             # 2. 获取位深
             try:
                 if hasattr(self.camera, 'get_bit_depth'):
@@ -474,7 +471,6 @@ class LogicWindow(ModernUI):
 
             # 3. 计算饱和值
             self.saturation_value = (1 << self.bit_depth) - 1
-            
             self.line_cam_max.setText(f"{self.saturation_value} ({self.bit_depth}-bit)")
             self.log_success(f"相机就绪 | 位深: {self.bit_depth} | 饱和阈值: {self.saturation_value}")
             
@@ -526,7 +522,7 @@ class LogicWindow(ModernUI):
                     success = True
                 
             if success:
-                # [关键] 这里更新显示的 Label，而不是 Target 输入框
+                # 这里更新显示的 Label，而不是 Target 输入框
                 # 显示给用户看的是 lbl_x / lbl_y
                 self.stage_widget.lbl_x.setText(f"X: {hw_x:.3f} mm")
                 self.stage_widget.lbl_y.setText(f"Y: {hw_y:.3f} mm")
@@ -548,7 +544,6 @@ class LogicWindow(ModernUI):
             self.stage_widget.target_x.blockSignals(False)
             self.stage_widget.target_y.blockSignals(False)
             self.log_error(f"同步位置异常: {e}")
-
 
     # --- 图像处理核心逻辑 ---
     def crop_image(self, full_image):
@@ -606,13 +601,13 @@ class LogicWindow(ModernUI):
                 if type(self.camera).__name__ == "NewVSYCamera":
                     self.camera.start_acquisition()
 
-                # 1. 获取并裁剪图像
+                # 获取并裁剪图像
                 img = self.camera.read_newest_image()
                 if img is None: return
                 cropped_img = self.crop_image(img)
                 
                 # ==========================================
-                # 【恢复】 2. 全局最大值监测与饱和报警
+                # 全局最大值监测与饱和报警
                 # ==========================================
                 max_val = np.max(cropped_img)
                 self.line_global_max.setText(f"{max_val}")
@@ -630,7 +625,7 @@ class LogicWindow(ModernUI):
                 # self.line_saturation.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
 
                 # ==========================================
-                # 【恢复】 3. 处理 Log 显示和 Mask
+                # 处理 Log 显示和 Mask
                 # ==========================================
                 # 获取 Mask 勾选状态
                 show_mask = self.chk_mask.isChecked()
@@ -645,7 +640,7 @@ class LogicWindow(ModernUI):
                     self.image_view.update_image(cropped_img, show_mask)
 
                 # ==========================================
-                # 【保留】 4. 鼠标悬停数值更新 (防止 ROI 变化导致越界)
+                # 鼠标悬停数值更新 (防止 ROI 变化导致越界)
                 # ==========================================
                 h, w = cropped_img.shape
                 if 0 <= self.last_mouse_x < w and 0 <= self.last_mouse_y < h:
@@ -674,11 +669,10 @@ class LogicWindow(ModernUI):
             self.btn_live.setText("👁 启动")
             self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;height: 45px;")
             self.log_info("实时显示已停止")
-            
         else:
-            # 根据您相机的曝光时间，这个值可以调整，比如 30 或 100
+            # 根据您相机的曝光时间
             exposure_ms = self.exposure_spin.value()
-            refresh_interval = max(30, int(exposure_ms)) 
+            refresh_interval = max(10, int(exposure_ms)) 
             
             self.timer.start(refresh_interval)
             self.is_live = True
