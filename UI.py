@@ -1,160 +1,95 @@
 import sys
+import time
+import numpy as np
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
-    QRadioButton, QDialog, QScrollArea, QSpacerItem, QSizePolicy
+    QRadioButton, QDialog, QScrollArea, QSpacerItem, QSizePolicy, 
+    QDoubleSpinBox, QSpinBox, QGroupBox, QTabWidget, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QTextCursor
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib
+# 导入工业级超快渲染库 pyqtgraph
+import pyqtgraph as pg
 
-# 优化 Matplotlib 现代渲染样式
-matplotlib.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'sans-serif']
-matplotlib.rcParams['axes.unicode_minus'] = False
-matplotlib.rcParams['grid.color'] = '#E2E8F0'
-matplotlib.rcParams['grid.linestyle'] = '--'
+# 全局配置 pyqtgraph 使用符合行/列映射的图像坐标轴顺序
+pg.setConfigOptions(imageAxisOrder='row-major')
 
-# 现代扁平化样式表 (QSS)
-MODERN_STYLE = """
-QMainWindow {
-    background-color: #F1F5F9;
-}
-QWidget #Sidebar {
-    background-color: #FFFFFF;
-    border-right: 1px solid #E2E8F0;
-}
-/* 卡片式设计 */
-QFrame.Card {
-    background-color: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 8px;
-}
-QFrame.Card:hover {
-    border: 1px solid #CBD5E1;
-}
-/* 分组小标题 */
-QLabel#SectionTitle {
-    color: #1E293B;
-    font-size: 13px;
-    font-weight: bold;
-    padding-bottom: 4px;
-    border-bottom: 2px solid #3B82F6;
-}
-/* 现代输入框与下拉框 */
-QLineEdit, QComboBox {
-    border: 1px solid #CBD5E1;
-    border-radius: 6px;
-    padding: 5px 8px;
-    background-color: #FFFFFF;
-    color: #334155;
-}
-QLineEdit:focus, QComboBox:focus {
-    border: 1px solid #3B82F6;
-}
-/* 现代主动作按钮 */
-QPushButton#PrimaryBtn {
-    background-color: #2563EB;
-    color: white;
-    font-weight: bold;
-    border: none;
-    padding: 8px 12px;
-    border-radius: 6px;
-}
-QPushButton#PrimaryBtn:hover {
-    background-color: #1D4ED8;
-}
-/* 成功/绿色按钮 */
-QPushButton#SuccessBtn {
-    background-color: #16A34A;
-    color: white;
-    font-weight: bold;
-    border: none;
-    padding: 10px 12px;
-    border-radius: 6px;
-}
-QPushButton#SuccessBtn:hover {
-    background-color: #15803D;
-}
-/* 危险/红色按钮 */
-QPushButton#DangerBtn {
-    background-color: #EF4444;
-    color: white;
-    font-weight: bold;
-    border: none;
-    padding: 8px 12px;
-    border-radius: 6px;
-}
-QPushButton#DangerBtn:hover {
-    background-color: #DC2626;
-}
-/* 普通/次要按钮 */
-QPushButton#SecondaryBtn {
-    background-color: #F8FAFC;
-    color: #475569;
-    border: 1px solid #CBD5E1;
-    padding: 6px 12px;
-    border-radius: 6px;
-}
-QPushButton#SecondaryBtn:hover {
-    background-color: #F1F5F9;
-    border: 1px solid #94A3B8;
-}
-"""
-
-class IndividualChartCanvas(FigureCanvas):
-    """独立的单张图表画布"""
-    def __init__(self, title):
-        fig = Figure(figsize=(4, 3), dpi=100)
-        fig.patch.set_facecolor('#FFFFFF')
-        self.ax = fig.add_subplot(111)
-        
-        # 现代极简图表轴设计
-        self.ax.set_title(title, fontsize=11, fontweight='bold', color='#1E293B', pad=10)
-        self.ax.set_xlim(0, 1)
-        self.ax.set_ylim(0, 1)
-        self.ax.set_xlabel("X 轴", fontsize=9, color='#64748B')
-        self.ax.set_ylabel("Y 轴", fontsize=9, color='#64748B')
-        self.ax.grid(True)
-        self.ax.tick_params(direction='in', colors='#94A3B8', labelsize=8)
-        
-        fig.tight_layout()
-        super().__init__(fig)
+# ==================== 工业原生样式常量定义 ====================
+STYLE_IMG_BG = "background-color: #121212; border: 1px solid #3A3A3A; border-radius: 4px;"
+STYLE_TEXT_GRAY = "color: #777777; font-size: 12px; font-weight: bold; font-family: 'Consolas', 'Microsoft YaHei';"
 
 
-class ModernChartCard(QFrame):
-    """支持双击无缝弹窗放大的现代图表卡片组件"""
-    def __init__(self, title, row, col, grid_layout):
+class ChartCard(QFrame):
+    """工业图表容器组件：支持双击无缝弹窗放大，并全面采用动态占位替换机制"""
+    def __init__(self, title, row, col, grid_layout, plot_type="line",placeholder_text="Waiting for Data..."):
         super().__init__()
         self.title = title
         self.row = row
         self.col = col
         self.grid_layout = grid_layout
+        self.plot_type = plot_type
         self.is_popped_out = False
         
-        # 声明样式类名
-        self.setObjectName("ChartCard")
         self.setFrameShape(QFrame.StyledPanel)
-        self.setStyleSheet("""
-            #ChartCard {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
-                border-radius: 12px;
-            }
-        """)
+        self.setFrameShadow(QFrame.Sunken)
+        self.setLineWidth(2)
         
-        # 布局布局
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 10)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(4, 4, 4, 4)
         
-        # 嵌入画布
-        self.canvas = IndividualChartCanvas(title)
-        layout.addWidget(self.canvas)
+        # ================= 统一严格执行用户指定的纯黑占位格式 =================
+        self.image_area = QFrame()
+        self.image_area.setStyleSheet(STYLE_IMG_BG)
+        self.image_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        self.lbl_img = QLabel(placeholder_text, self.image_area)
+        self.lbl_img.setStyleSheet(STYLE_TEXT_GRAY)
+        self.lbl_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.img_layout = QVBoxLayout(self.image_area)
+        self.img_layout.setContentsMargins(0, 0, 0, 0)
+        self.img_layout.addWidget(self.lbl_img)
+        
+        self.main_layout.addWidget(self.image_area)
+        
+        # 实际的工业级渲染控件指针，初始全部置空（纯黑占位）
+        self.plot_widget = None  
+
+    def callback_update_image(self, data, colormap_name=None):
+        """回调接口 1：专门用于更新图像/伪彩形貌数据流 (ImageView)"""
+        if self.plot_widget is None:
+            # 首次接收数据，安全销毁占位文本，装载硬件加速组件
+            self.img_layout.removeWidget(self.lbl_img)
+            self.lbl_img.deleteLater()
+            
+            self.plot_widget = pg.ImageView()
+            self.plot_widget.ui.roiBtn.hide()    
+            self.plot_widget.ui.menuBtn.hide()
+            if colormap_name:
+                self.plot_widget.setColorMap(pg.colormap.get(colormap_name))
+                
+            self.img_layout.addWidget(self.plot_widget)
+            
+        self.plot_widget.setImage(data)
+
+    def callback_update_line(self, x, y, pen_color='#00FF00'):
+        """回调接口 2：专门用于更新矢量曲线/分析图表数据 (PlotWidget)"""
+        if self.plot_widget is None:
+            # 首次接收数据，安全销毁占位文本，装载矢量控制组件
+            self.img_layout.removeWidget(self.lbl_img)
+            self.lbl_img.deleteLater()
+            
+            self.plot_widget = pg.PlotWidget()
+            self.plot_widget.setTitle(self.title, color="w", size="10pt")
+            self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+            
+            self.img_layout.addWidget(self.plot_widget)
+            
+        self.plot_widget.plot(x, y, clear=True, pen=pg.mkPen(pen_color, width=1.5))
 
     def mouseDoubleClickEvent(self, event):
-        """捕获双击事件"""
         if event.button() == Qt.LeftButton:
             if not self.is_popped_out:
                 self.pop_out()
@@ -162,262 +97,294 @@ class ModernChartCard(QFrame):
                 self.dialog.close()
 
     def pop_out(self):
-        """将当前卡片脱离原生网格，切入弹窗模式"""
         self.is_popped_out = True
-        
-        # 1. 从主界面的网格布局中剥离
         self.grid_layout.removeWidget(self)
         
-        # 2. 创建一个现代清爽的对话框窗口
         self.dialog = QDialog(self.window())
         self.dialog.setWindowTitle(f"高级分析视图 - {self.title}")
-        self.dialog.resize(900, 650)
-        self.dialog.setMinimumSize(600, 450)
+        self.dialog.resize(950, 700)
         
         dialog_layout = QVBoxLayout(self.dialog)
-        dialog_layout.setContentsMargins(12, 12, 12, 12)
-        # 将卡片塞入新窗口中（Qt会自动处理组件的Parent转移）
+        dialog_layout.setContentsMargins(6, 6, 6, 6)
         dialog_layout.addWidget(self)
         
-        # 3. 拦截弹窗关闭事件，确保关闭时能触发安全收回
         self.dialog.closeEvent = self.dialog_close_event
         self.dialog.show()
-        self.canvas.draw_idle()
 
     def dialog_close_event(self, event):
-        """弹窗关闭时的回位逻辑"""
-        # 从弹窗中卸载本身
         self.setParent(None)
-        
-        # 完美重新塞回原来的网格行列坐标
         self.grid_layout.addWidget(self, self.row, self.col)
         self.is_popped_out = False
-        
-        # 刷新画布尺寸自适应
-        self.canvas.draw_idle()
         event.accept()
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("CMI采集重构系统")
-        self.resize(1300, 850)
-        self.setStyleSheet(MODERN_STYLE)
+        self.setWindowTitle("CMI高级光场智能采集与多维重构控制台")
+        self.resize(1550, 900)
         
-        # 主框架容器
+        self.log_terminal = None
+        
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         
         main_layout = QHBoxLayout(main_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
         
-        # ==================== 左侧：现代感侧边栏控制面板 ====================
-        sidebar = QWidget()
-        sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(310)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(16, 16, 16, 16)
-        sidebar_layout.setSpacing(14)
-        
-        # 使用可滚动区域封装左侧控制卡片，防止低分辨率屏幕溢出
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QScrollArea.NoFrame)
-        scroll_content = QWidget()
-        self.ctrl_layout = QVBoxLayout(scroll_content)
-        self.ctrl_layout.setContentsMargins(0, 0, 4, 0)
-        self.ctrl_layout.setSpacing(14)
-        
-        self.build_camera_section()
-        self.build_settings_section()
-        self.build_recon_section()
-        self.build_data_section()
-        self.build_results_section()
-        
-        scroll_area.setWidget(scroll_content)
-        sidebar_layout.addWidget(scroll_area)
-        
-        # 底部状态栏
-        status_card = QFrame()
-        status_card.setStyleSheet("background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;")
-        status_layout = QHBoxLayout(status_card)
-        status_layout.setContentsMargins(8, 6, 8, 6)
-        status_lbl = QLabel("系统状态:")
-        status_lbl.setStyleSheet("color: #475569; font-weight: bold; font-size:11px;")
-        self.status_val = QLabel("设备就绪 (Ready)")
-        self.status_val.setStyleSheet("color: #16A34A; font-weight: bold; font-size:11px;")
-        status_layout.addWidget(status_lbl)
-        status_layout.addWidget(self.status_val)
-        status_layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        sidebar_layout.addWidget(status_card)
-        
-        main_layout.addWidget(sidebar)
-        
-        # ==================== 右侧：现代卡片式 2x2 数据图表网格 ====================
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(16, 16, 16, 16)
+        # ==================== 左侧：2x2 统一占位工业绘图网格区 ====================
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
         
         chart_grid_widget = QWidget()
-        self.chart_grid = QGridLayout(chart_grid_widget)
-        self.chart_grid.setContentsMargins(0, 0, 0, 0)
-        self.chart_grid.setSpacing(14)  # 卡片间距
+        chart_grid = QGridLayout(chart_grid_widget)
+        chart_grid.setContentsMargins(0, 0, 0, 0)
+        chart_grid.setSpacing(8)
         
-        # 初始化 4 个高度独立的、支持双击无缝放大的现代卡片
-        self.card1 = ModernChartCard("记录衍射图谱 (Diffraction)", 0, 0, self.chart_grid)
-        self.card2 = ModernChartCard("波前重构结果 (Reconstruction)", 0, 1, self.chart_grid)
-        self.card3 = ModernChartCard("3D 能量伪彩形貌 (3D Profile)", 1, 0, self.chart_grid)
-        self.card4 = ModernChartCard("多维数据统计分析 (Analysis)", 1, 1, self.chart_grid)
+        # 4个视区全部使用各自名字的纯黑图进行状态占位
+        self.card1 = ChartCard("相机实时采集画面", 0, 0, chart_grid,    
+                               plot_type="image", placeholder_text="相机信号")
         
-        # 装载进网格
-        self.chart_grid.addWidget(self.card1, 0, 0)
-        self.chart_grid.addWidget(self.card2, 0, 1)
-        self.chart_grid.addWidget(self.card3, 1, 0)
-        self.chart_grid.addWidget(self.card4, 1, 1)
+        self.card2 = ChartCard("波前重构结果", 0, 1, chart_grid,    
+                               plot_type="line", placeholder_text="重构结果")
         
-        right_layout.addWidget(chart_grid_widget, stretch=1)
-        main_layout.addWidget(right_panel, stretch=1)
+        self.card3 = ChartCard("3D 形貌", 1, 0, chart_grid,    
+                               plot_type="profile", placeholder_text="3D 形貌")
+        
+        self.card4 = ChartCard("数据分析", 1, 1, chart_grid,    
+                               plot_type="line", placeholder_text="数据分析结果")
+        
+        chart_grid.addWidget(self.card1, 0, 0)
+        chart_grid.addWidget(self.card2, 0, 1)
+        chart_grid.addWidget(self.card3, 1, 0)
+        chart_grid.addWidget(self.card4, 1, 1)
+        
+        left_layout.addWidget(chart_grid_widget, stretch=1)
+        main_layout.addWidget(left_panel, stretch=1)
+        
+        # ==================== 右侧：单栏式多标签控制面板区 ====================
+        sidebar = QWidget()
+        sidebar.setFixedWidth(360)  
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(8)
+        
+        self.tab_manager = QTabWidget()
+        
+        self.tab_camera = QWidget()
+        self.col1_layout = QVBoxLayout(self.tab_camera)
+        self.col1_layout.setContentsMargins(4, 8, 4, 4)
+        self.col1_layout.setSpacing(8)
+        self.build_column_1_acquisition()
+        self.tab_manager.addTab(self.tab_camera, "相机采集与控制")
+        
+        self.tab_recon = QWidget()
+        self.col2_layout = QVBoxLayout(self.tab_recon)
+        self.col2_layout.setContentsMargins(4, 8, 4, 4)
+        self.col2_layout.setSpacing(8)
+        self.build_column_2_reconstruction()
+        self.tab_manager.addTab(self.tab_recon, "重构参数配置")
+        
+        sidebar_layout.addWidget(self.tab_manager, stretch=0)
+        
+        self.build_results_section(sidebar_layout)
+        self.build_log_section(sidebar_layout)
+        
+        main_layout.addWidget(sidebar)
 
-    def create_card_container(self, title_text):
-        """辅助函数：创建美观、统一的现代化表单白色卡片"""
-        card = QFrame()
-        card.setProperty("class", "Card")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+    def build_column_1_acquisition(self):
+        """构建 Tab 1：相机连接、控制与综合光路动态参数"""
+        cam_box = QGroupBox("硬件与光路控制")
+        cam_layout = QVBoxLayout(cam_box)
         
-        title = QLabel(title_text)
-        title.setObjectName("SectionTitle")
-        layout.addWidget(title)
-        
-        return card, layout
+        # 1. 连接按钮行
+        h_conn = QHBoxLayout()
+        self.btn_conn = QPushButton("连接相机")
+        h_conn.addWidget(self.btn_conn)
+        cam_layout.addLayout(h_conn)
 
-    def build_camera_section(self):
-        card, layout = self.create_card_container("相机控制")
+        grid_params = QGridLayout()
+        grid_params.setSpacing(6)
+        grid_params.setContentsMargins(2, 4, 2, 4)
         
-        btn_layout = QHBoxLayout()
-        btn_conn = QPushButton("连接设备")
-        btn_conn.setObjectName("PrimaryBtn")
-        btn_disconn = QPushButton("断开连接")
-        btn_disconn.setObjectName("SecondaryBtn")
-        btn_layout.addWidget(btn_conn)
-        btn_layout.addWidget(btn_disconn)
-        layout.addLayout(btn_layout)
-        
-        h_layout = QHBoxLayout()
-        h_layout.addWidget(QLabel("采集模式:"))
-        r_con = QRadioButton("连续 (Con)")
-        r_tri = QRadioButton("触发 (Tri)")
-        r_con.setChecked(True)
-        h_layout.addWidget(r_con)
-        h_layout.addWidget(r_tri)
-        layout.addLayout(h_layout)
-        
-        self.ctrl_layout.addWidget(card)
+        # 曝光时间
+        grid_params.addWidget(QLabel("曝光时间 (ms):"), 0, 0, Qt.AlignmentFlag.AlignRight)
+        self.exposure_spin = QDoubleSpinBox()
+        self.exposure_spin.setRange(0.001, 2000.0)
+        self.exposure_spin.setValue(12.5)
+        self.exposure_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        grid_params.addWidget(self.exposure_spin, 0, 1)
 
-    def build_settings_section(self):
-        card, layout = self.create_card_container("参数配置")
-        
-        grid = QGridLayout()
-        grid.setSpacing(8)
-        grid.addWidget(QLabel("曝光时间 (ms):"), 0, 0)
-        grid.addWidget(QLineEdit("10.0"), 0, 1)
-        
-        grid.addWidget(QLabel("最大光子阈值:"), 1, 0)
-        grid.addWidget(QLineEdit("4096"), 1, 1)
-        
-        grid.addWidget(QLabel("光学 F 数:"), 2, 0)
-        combo = QComboBox()
-        combo.addItems(["F/10", "F/12", "F/16"])
-        grid.addWidget(combo, 2, 1)
-        layout.addLayout(grid)
-        
-        btn_grid = QGridLayout()
-        btn_grid.setSpacing(6)
-        btn_grid.addWidget(QPushButton("采集暗场"), 0, 0)
-        btn_grid.addWidget(QPushButton("采集衍射"), 0, 1)
-        btn_grid.addWidget(QPushButton("Log 对数转换"), 1, 0)
-        btn_grid.addWidget(QPushButton("应用掩膜 Mask"), 1, 1)
-        
-        # 批量应用次要按钮样式
-        for i in range(btn_grid.count()):
-            btn_grid.itemAt(i).widget().setObjectName("SecondaryBtn")
-            
-        layout.addLayout(btn_grid)
-        self.ctrl_layout.addWidget(card)
+        # ROI 尺寸
+        grid_params.addWidget(QLabel("ROI 裁剪窗口:"), 1, 0, Qt.AlignmentFlag.AlignRight)      
+        h_size = QHBoxLayout()
+        self.roi_w = QLineEdit("2048");self.roi_w.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.roi_h = QLineEdit("2048");self.roi_h.setAlignment(Qt.AlignmentFlag.AlignRight)
+        h_size.addWidget(self.roi_w);h_size.addWidget(QLabel("x"));h_size.addWidget(self.roi_h)
+        grid_params.addLayout(h_size, 1, 1)
 
-    def build_recon_section(self):
-        card, layout = self.create_card_container("重构算法内核")
-        
-        btn_ref = QPushButton("校准并保存参考波前")
-        btn_ref.setObjectName("SecondaryBtn")
-        layout.addWidget(btn_ref)
-        
-        btn_recon = QPushButton("🚀 开始单次重构运算")
-        btn_recon.setObjectName("SuccessBtn")
-        layout.addWidget(btn_recon)
-        
-        h_layout = QHBoxLayout()
-        h_layout.addWidget(QLabel("实时循环恢复:"))
-        r_off = QRadioButton("关闭")
-        r_on = QRadioButton("开启")
-        r_off.setChecked(True)
-        h_layout.addWidget(r_off)
-        h_layout.addWidget(r_on)
-        layout.addLayout(h_layout)
-        
-        self.ctrl_layout.addWidget(card)
+        # 最大光子饱和阈值
+        grid_params.addWidget(QLabel("最大光子饱和阈值:"), 2, 0, Qt.AlignmentFlag.AlignRight)
+        self.line_global_max = QLabel("0")
+        self.line_global_max.setAlignment(Qt.AlignmentFlag.AlignRight)
+        grid_params.addWidget(self.line_global_max, 2, 1)    
 
-    def build_data_section(self):
-        card, layout = self.create_card_container("数据归档")
-        btn_layout = QHBoxLayout()
-        b1 = QPushButton("导出数据集")
-        b1.setObjectName("SecondaryBtn")
-        b2 = QPushButton("导入历史文件")
-        b2.setObjectName("SecondaryBtn")
-        btn_layout.addWidget(b1)
-        btn_layout.addWidget(b2)
-        layout.addLayout(btn_layout)
-        self.ctrl_layout.addWidget(card)
+        # 鼠标位置光子数
+        grid_params.addWidget(QLabel("鼠标位置光子数:"), 3, 0, Qt.AlignmentFlag.AlignRight)
+        self.line_global_mouse = QLabel("0")
+        self.line_global_mouse.setAlignment(Qt.AlignmentFlag.AlignRight)
+        grid_params.addWidget(self.line_global_mouse, 3, 1)    
+        cam_layout.addLayout(grid_params)
 
-    def build_results_section(self):
-        card, layout = self.create_card_container("质量指标检测结果")
+        opt_layout = QHBoxLayout()
+        opt_layout.addWidget(QLabel("光场形态:"))
+        self.optical_mode_combo = QComboBox()
+        self.optical_mode_combo.addItems(["汇聚光场", "平行光场"])
+        opt_layout.addWidget(self.optical_mode_combo, stretch=1)
+        cam_layout.addLayout(opt_layout)
         
-        grid = QGridLayout()
-        grid.setSpacing(6)
-        grid.addWidget(QLabel("PV 峰谷值 (nm):"), 0, 0)
-        e1 = QLineEdit("0.142")
-        e1.setReadOnly(True)
-        grid.addWidget(e1, 0, 1)
-        
-        grid.addWidget(QLabel("RMS 均方根 (nm):"), 1, 0)
-        e2 = QLineEdit("0.024")
-        e2.setReadOnly(True)
-        grid.addWidget(e2, 1, 1)
-        
-        grid.addWidget(QLabel("像素偏移 X/Y:"), 2, 0)
-        h_box = QHBoxLayout()
-        h_box.addWidget(QLineEdit("0"))
-        h_box.addWidget(QLabel(" / "))
-        h_box.addWidget(QLineEdit("0"))
-        grid.addLayout(h_box, 2, 1)
-        
-        layout.addLayout(grid)
-        self.ctrl_layout.addWidget(card)
+        self.dynamic_widget = QWidget()
+        self.dynamic_params_grid = QGridLayout(self.dynamic_widget)
+        self.dynamic_params_grid.setContentsMargins(0, 0, 0, 0)
+        self.dynamic_params_grid.setSpacing(6)
+        cam_layout.addWidget(self.dynamic_widget)
 
+        self.optical_mode_combo.currentIndexChanged.connect(lambda index: self.switch_dynamic_settings(index == 0))
+        self.switch_dynamic_settings(True) 
+        
+        grid_ops = QGridLayout()
+        self.chk_log = QPushButton("Log")
+        self.chk_mask = QPushButton("Mask")
+        grid_ops.addWidget(self.chk_log, 0, 0)
+        grid_ops.addWidget(self.chk_mask, 0, 1)
+        cam_layout.addLayout(grid_ops)
+        
+        self.btn_acquisition = QPushButton("采集")
+        cam_layout.addWidget(self.btn_acquisition)
+        self.col1_layout.addWidget(cam_box)
+        self.col1_layout.addSpacerItem(QSpacerItem(0, 30, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+    def build_column_2_reconstruction(self):
+        """构建 Tab 2：专门负责固有重构算法解算参数与算法调度内核"""
+        static_box = QGroupBox("参数")
+        static_grid = QGridLayout(static_box)
+        static_grid.setSpacing(6)
+
+        static_grid.addWidget(QLabel("激光波长(nm):"), 0, 0, Qt.AlignRight)
+        self.wavelength = QLineEdit("632.8");self.wavelength.setAlignment(Qt.AlignRight)
+        static_grid.addWidget(self.wavelength, 0, 1)
+        static_grid.addWidget(QLabel("迭代轮数:"), 1, 0, Qt.AlignRight)
+        self.recon_iter_spin = QSpinBox()
+        self.recon_iter_spin.setRange(1, 10000)
+        self.recon_iter_spin.setValue(200)
+        self.recon_iter_spin.setAlignment(Qt.AlignRight)
+        static_grid.addWidget(self.recon_iter_spin, 1, 1)   
+        
+        static_grid.addWidget(QLabel("重构传播距离 (mm):"), 2, 0, Qt.AlignRight)
+        self.recon_dist_spin = QDoubleSpinBox()
+        self.recon_dist_spin.setRange(-2000.0, 2000.0)
+        self.recon_dist_spin.setValue(84.32)
+        self.recon_dist_spin.setAlignment(Qt.AlignRight)
+        static_grid.addWidget(self.recon_dist_spin, 2, 1)
+        self.col2_layout.addWidget(static_box)
+        
+        core_box = QGroupBox("重构")
+        core_layout = QVBoxLayout(core_box)
+        
+        self.btn_ref = QPushButton("校准并保存基准场")
+        self.btn_recon = QPushButton("启动波前重构")
+        core_layout.addWidget(self.btn_ref)
+        core_layout.addWidget(self.btn_recon)
+        
+        self.col2_layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+    def build_results_section(self, parent_layout):
+        res_box = QGroupBox("重构结果")
+        res_layout = QVBoxLayout(res_box)
+        
+        h_data = QHBoxLayout()
+        h_data.addWidget(QPushButton("导出当前数据"))
+        h_data.addWidget(QPushButton("载入参数"))
+        res_layout.addLayout(h_data)
+        
+        grid_res = QGridLayout()
+        grid_res.setSpacing(6)
+        grid_res.addWidget(QLabel("PV (nm):"), 0, 0, Qt.AlignRight)
+        e1 = QLineEdit("0.142"); e1.setReadOnly(True); e1.setAlignment(Qt.AlignRight)
+        grid_res.addWidget(e1, 0, 1)
+        
+        grid_res.addWidget(QLabel("RMS (nm):"), 1, 0, Qt.AlignRight)
+        e2 = QLineEdit("0.024"); e2.setReadOnly(True); e2.setAlignment(Qt.AlignRight)
+        grid_res.addWidget(e2, 1, 1)
+        
+        grid_res.addWidget(QLabel("偏移 X/Y:"), 2, 0, Qt.AlignRight)
+        h_box_res = QHBoxLayout()
+        ox = QLineEdit("0"); ox.setAlignment(Qt.AlignRight); ox.setReadOnly(True)
+        oy = QLineEdit("0"); oy.setAlignment(Qt.AlignRight); oy.setReadOnly(True)
+        h_box_res.addWidget(ox); h_box_res.addWidget(QLabel("/")); h_box_res.addWidget(oy)
+        grid_res.addLayout(h_box_res, 2, 1)
+        
+        res_layout.addLayout(grid_res)
+        parent_layout.addWidget(res_box)
+
+    def build_log_section(self, parent_layout):
+        log_box = QGroupBox("系统运行控制日志")
+        log_layout = QVBoxLayout(log_box)
+        log_layout.setContentsMargins(6, 6, 6, 6)
+        
+        self.log_terminal = QPlainTextEdit()
+        self.log_terminal.setReadOnly(True)      
+        log_layout.addWidget(self.log_terminal)
+        log_box.setFixedHeight(180) 
+        parent_layout.addWidget(log_box)
+
+    def log(self, level, text):
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        color_map = {
+            "INFO": "#00FF00",    
+            "WARN": "#FFCC00",    
+            "SUCCESS": "#00FFFF"  
+        }
+        color = color_map.get(level, "#FFFFFF")
+        
+        if self.log_terminal is not None:
+            log_line = f'<span style="color: #888888;">[{timestamp}]</span> <span style="color: {color}; font-weight: bold;">{level}</span>: {text}'
+            self.log_terminal.appendHtml(log_line)
+            self.log_terminal.moveCursor(QTextCursor.MoveOperation.End)
+        else:
+            print(f"[{timestamp}] [{level}] {text}")
+
+    def switch_dynamic_settings(self, is_convergent):
+        while self.dynamic_params_grid.count():
+            item = self.dynamic_params_grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    sub_item = item.layout().takeAt(0)
+                    if sub_item.widget(): sub_item.widget().deleteLater()
+                item.layout().deleteLater()
+        
+        if is_convergent:           
+            self.dynamic_params_grid.addWidget(QLabel("数值孔径校准 F数:"), 3, 0, Qt.AlignRight)
+            f_combo = QComboBox()
+            f_combo.addItems(["F/10", "F/12", "F/16"])
+            self.dynamic_params_grid.addWidget(f_combo, 3, 1)
+        else:
+            self.dynamic_params_grid.addWidget(QLabel("有效物理通光口径(mm):"), 1, 0, Qt.AlignRight)
+            self.effective_aperture = QLabel("25.4")
+            self.effective_aperture.setAlignment(Qt.AlignRight)
+            self.dynamic_params_grid.addWidget(self.effective_aperture, 1, 1)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # 设置应用级的优雅现代全局字体
-    font = QFont("Segoe UI", 9)
-    # 中文字体退化支持
-    font.setFamilies(["Segoe UI", "Microsoft YaHei", "Arial"])
-    app.setFont(font)
-    
     app.setStyle("Fusion")
+    
+    font = QFont("Microsoft YaHei", 9)
+    app.setFont(font)
     
     window = MainWindow()
     window.show()
