@@ -1042,13 +1042,6 @@ class LogicWindow(ModernUI):
         self.worker.log_signal.connect(self._worker_log)
         self.worker.finished_signal.connect(self._scan_finished)
 
-        if self.is_live:
-            self.timer.stop()
-            self.is_live = False
-            self.btn_live.setText("🟢 启动")
-            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;height: 45px;")
-            self.was_live_before_scan = True
-
         self.worker.start()
 
     def _worker_log(self, msg, level):
