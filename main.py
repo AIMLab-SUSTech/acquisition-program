@@ -205,11 +205,6 @@ class ScanWorker(QThread):
             else:
                 self.log_signal.emit(f"第 {i} 点采集失败: 空图像", "warning")
 
-        if hasattr(self.camera, 'set_trigger_mode'):
-            # 停止实时流，准备精确采集
-            self.camera.set_trigger_mode('continuous')
-            # 给一点时间让相机反应
-            time.sleep(0.1)
         # 循环结束
         self.finished_signal.emit()
 
@@ -922,7 +917,6 @@ class LogicWindow(ModernUI):
             )
             
             if reply == QMessageBox.StandardButton.Yes:
-                # 假设 Yes 意味着 "我要去改"，则返回 False 阻止采集
                 return False
             else:
                 # No 意味着取消操作
@@ -937,7 +931,6 @@ class LogicWindow(ModernUI):
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"无法创建目录:\n{e}")
                 return False
-        
         return True
 
     def start_scan(self):
@@ -1055,12 +1048,6 @@ class LogicWindow(ModernUI):
             self.btn_live.setText("🟢 启动")
             self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;height: 45px;")
             self.was_live_before_scan = True
-            self.log_info("为保证采集稳定,已暂停实时显示")
-            
-            # 【关键】让相机停止连续采集
-            if hasattr(self.camera, 'stop_acquisition'):
-                self.camera.stop_acquisition()
-            time.sleep(0.3)  # 给更长时间让buffer清空
 
         self.worker.start()
 
@@ -1113,11 +1100,7 @@ class LogicWindow(ModernUI):
         final_x = self.scanner.final_pos[0]
         final_y = self.scanner.final_pos[1]
         self._move_logical_delta(-final_x, 0)
-        self._move_logical_delta(-final_y, 1)
-
-        if getattr(self, 'was_live_before_scan', False):
-            self.log_info("自动恢复实时显示...")
-            self.toggle_live() # 直接调用 toggle 函数重新启动
+        self._move_logical_delta(-final_y, 1)  
 
         self.btn_cap.setEnabled(True)  # 锁定按钮
         self.btn_cap.setText("🔴 采集")
@@ -1127,16 +1110,6 @@ class LogicWindow(ModernUI):
         """
         将当前扫描数据写入 H5 文件。(img_data, cur_x, cur_y, wl)
         """
-        if os.path.exists(h5_path):
-            reply= QMessageBox.question(
-                self,
-                "确认追加写入",
-                f"文件已存在：\n{h5_path}\n\n确认追加写入吗？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No       # 默认选中 No，防止误操作
-            )
-            return reply == QMessageBox.No
-        
         if not h5_path:
             h5_path = os.path.join(self.save_dir, "raw_data", self.current_scan_h5_name)
         try:
@@ -1204,18 +1177,13 @@ class LogicWindow(ModernUI):
                     rw = int(self.roi_w.text())
                     rh = int(self.roi_h.text())
                 except:
-                    rh = int(dp_arr.shape[1]) if dp_arr.ndim >= 2 else 0
-                    rw = int(dp_arr.shape[2]) if dp_arr.ndim >= 3 else 0
+                    rh = int(frame.shape[1]) if frame.ndim >= 2 else 0
+                    rw = int(frame.shape[2]) if frame.ndim >= 3 else 0
                 f.attrs['detector_size'] = np.array([rw, rh])
                 f.attrs['exposure_time'] = np.array([float(self.exposure_spin.value())])
                 f.attrs['scan_method'] = np.array([self.combo_scan_mode.currentText().encode('utf-8')])
                 f.attrs['scan_range'] = np.array([float(self.scan_range_x.text()), float(self.scan_range_y.text())])
                 f.attrs['scan_step'] = np.array([float(self.scan_step.text())]) 
-                # f.attrs['binning_number'] = np.array([int(self.combo_sampling.currentText().split()[0])]) 有问题
-                
-                # 4. 其他属性
-                # 注意：原代码 dp.shape[0] 如果 dp 是 list 会报错，必须用 len(dp) 或 dp_arr.shape[0]
-                f.attrs['array_size'] = dp_arr.shape[0] 
 
         except Exception as e:
             self.log_error(f"H5 保存失败: {e}")

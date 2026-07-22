@@ -204,9 +204,9 @@ class HikrobotCamera(Camera):
             print(f"停止采集异常: {e}")
 
     def read_newest_image(self):
-        if not self.is_streaming or self.cam is None:
-            print("相机未处于采集状态")
-            return None
+        # if not self.is_streaming or self.cam is None:
+        #     print("相机未处于采集状态")
+        #     return None
 
         try:
             # 获取像素格式、宽、高
