@@ -27,7 +27,7 @@ class MultiAxisController:
         sock.send((command + "\n").encode())
         sock.settimeout(timeout)
         while True:
-            try:
+            try: 
                 data = sock.recv(4096).decode()
             except socket.timeout:
                 raise TimeoutError(f"等待 '{expected_keyword}' 超时")
