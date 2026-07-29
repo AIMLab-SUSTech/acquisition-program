@@ -53,6 +53,18 @@ class DeviceLoader(QThread):
                         from motion_controller import xps
                         device_instance = xps(IP='192.168.254.254')
                         device_instance.init_groups(['Group1', 'Group2'])
+                    case "AMI":
+                        from Ami import PvcsvrController
+                        device_instance = PvcsvrController(exe_path="./dll/Ami/pvcsvr.exe")
+                        try:
+                            ctrl.connect_and_enable()
+                        except Exception as e:
+                            print("初始化失败:", e)
+                            exit()
+
+                        # 使能通道1和通道2
+                        ctrl.enable_channel(1, True)
+                        ctrl.enable_channel(2, True)
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
@@ -723,7 +735,6 @@ class LogicWindow(ModernUI):
             
         dist = stage_step * direction
         try:
-            # 1. 执行相对移动
             self.motion.move_by(dist, axis=target_axis)
             self.sync_hardware_position()
             
@@ -742,7 +753,6 @@ class LogicWindow(ModernUI):
         self.log_success(f"移动至绝对位置: ({target_x}, {target_y})...")
         
         try:
-            # 方案 A: 优先使用绝对移动接口 (更准)
             if hasattr(self.motion, 'move_to'):
                 # 处理轴交换
                 is_swap = self.stage_widget.check_swap.isChecked()
@@ -815,9 +825,6 @@ class LogicWindow(ModernUI):
             return
 
         try:
-            # 尝试调用硬件的绝对移动接口
-            # 假设驱动通过 move_to(position, axis) 实现
-            # Axis 0 = X, Axis 1 = Y
             self.motion.move_to(self.zero_stage_x, axis=0)
             self.motion.move_to(self.zero_stage_y, axis=1)
             
@@ -1064,7 +1071,6 @@ class LogicWindow(ModernUI):
         ScanWorker.update_signal -> (img_data, cur_x, cur_y, idx)
         """     
         # 更新界面图像显示
-        # 检查是否需要显示 Mask (十字准星)
         show_mask = self.chk_mask.isChecked()
         self.image_view.update_image(img_data, show_mask=show_mask)
 
