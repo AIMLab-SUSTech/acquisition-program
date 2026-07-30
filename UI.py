@@ -139,7 +139,7 @@ class ModernUI(QMainWindow):
         l_dev.addWidget(self.btn_open_cam, 0, 2)
         
         l_dev.addWidget(QLabel("位移台:"), 1, 0)
-        self.combo_stage = self.mk_combo(["NewPort", "Ami"])
+        self.combo_stage = self.mk_combo(["NewPort", "Ami", "Ami(双控制器)"])
         l_dev.addWidget(self.combo_stage, 1, 1)
         
         # [修复] 显式赋值给 self
