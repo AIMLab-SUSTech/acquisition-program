@@ -159,7 +159,7 @@ class MultiAxisController:
                 resp = self._send_and_wait(sock, "SysCmd r:item=SettleStatus syn", "ACK:")
                 val_str = resp.split("dat:")[-1].strip().rstrip(';').rstrip(',')
                 val = int(val_str)
-                if val == 3:   # 两个通道均停止
+                if val == 3 or val == 1:   # 两个通道均停止
                     return
                 time.sleep(0.05)
             raise TimeoutError("等待停止超时")
