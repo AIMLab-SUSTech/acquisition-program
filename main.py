@@ -57,14 +57,14 @@ class DeviceLoader(QThread):
                         from Ami import PvcsvrController
                         device_instance = PvcsvrController(exe_path="./dll/Ami/pvcsvr.exe")
                         try:
-                            ctrl.connect_and_enable()
+                            device_instance.ctrl.connect_and_enable()
                         except Exception as e:
                             print("初始化失败:", e)
                             exit()
 
                         # 使能通道1和通道2
-                        ctrl.enable_channel(1, True)
-                        ctrl.enable_channel(2, True)
+                        device_instance.ctrl.enable_channel(1, True)
+                        device_instance.ctrl.enable_channel(2, True)
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
@@ -351,6 +351,7 @@ class LogicWindow(ModernUI):
         self.camera = None
         self.motion = None
         self.is_init = False
+        self.pos_ref = True
         
         # 实时流定时器
         self.timer = QTimer()
@@ -1100,7 +1101,7 @@ class LogicWindow(ModernUI):
         final_y = self.scanner.final_pos[1]
         self._move_logical_delta(-final_x, 0)
         self._move_logical_delta(-final_y, 1)  
-
+        self.pos_ref = True
         self.btn_cap.setEnabled(True)  # 锁定按钮
         self.btn_cap.setText("🔴 采集")
         self.btn_cap.setStyleSheet("background:#e74c3c;color:white;font-weight:bold;height: 45px;")
@@ -1119,8 +1120,12 @@ class LogicWindow(ModernUI):
 
         # --- 将 Data 写入 H5 ---
         frame = np.array(img_data, dtype=np.uint16)   # (H, W)
-        x_val = np.array([cur_x], dtype=np.float64)   # (1,)
-        y_val = np.array([cur_y], dtype=np.float64)   # (1,)
+        if self.pos_ref == True:
+            x_val = np.array([cur_x], dtype=np.float64)   # (1,)
+            self.x_ref = x_val
+            y_val = np.array([cur_y], dtype=np.float64)   # (1,)
+            self.y_ref = y_val
+            self.pos_ref = False
 
         try:  
             with h5py.File(h5_path, 'a') as f:
@@ -1154,10 +1159,10 @@ class LogicWindow(ModernUI):
                     f["data"][n] = frame
 
                     f["x"].resize(n + 1, axis=0)
-                    f["x"][n] = cur_x
+                    f["x"][n] = cur_x - self.x_ref
 
                     f["y"].resize(n + 1, axis=0)
-                    f["y"][n] = cur_y
+                    f["y"][n] = cur_y - self.y_ref
 
                 f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
                 # f.attrs['pixel_size'] = np.array([float(self.pixel_size.text())]) 有问题
@@ -1233,7 +1238,7 @@ class LogicWindow(ModernUI):
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：无法获取图像")
                     return
-                self.cmi_dark = self.crop_image(cmi_dark)
+                self.cmi_dark = self.crop_image(self.cmi_dark)
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：图像裁剪失败") 
                     return
@@ -1291,8 +1296,8 @@ class LogicWindow(ModernUI):
                         rw = int(self.roi_w.text())
                         rh = int(self.roi_h.text())
                     except:
-                        rh = int(dp_arr.shape[1]) if dp_arr.ndim >= 2 else 0
-                        rw = int(dp_arr.shape[2]) if dp_arr.ndim >= 3 else 0
+                        rh = int(roi_img.shape[1]) if roi_img.ndim >= 2 else 0
+                        rw = int(roi_img.shape[2]) if roi_img.ndim >= 3 else 0
                     f.attrs['detector_size'] = np.array([rw, rh])
                     f.attrs['exposure_time'] = np.array([float(self.exposure_spin.value())])
                     # f.attrs['binning_number'] = np.array([int(self.combo_sampling.currentText().split()[0])])
