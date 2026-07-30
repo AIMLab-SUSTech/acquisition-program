@@ -65,6 +65,15 @@ class DeviceLoader(QThread):
                         # 使能通道1和通道2
                         ctrl.enable_channel(1, True)
                         ctrl.enable_channel(2, True)
+                    case "Ami(双控制器)":
+                        from dual_ami import DualAmiController
+                        device_instance = DualAmiController(exe_path="./dll/Ami/pvcsvr.exe", x_axis=1)
+                        try:
+                            device_instance.connect()
+                            device_instance.enable_channels()
+                        except Exception as e:
+                            print("双AMI初始化失败:", e)
+                            exit()
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)
