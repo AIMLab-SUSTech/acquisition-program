@@ -1132,8 +1132,10 @@ class LogicWindow(ModernUI):
         if self.pos_ref == True:
             x_val = np.array([cur_x], dtype=np.float64)   # (1,)
             self.x_ref = x_val
+            x_val -= self.x_ref
             y_val = np.array([cur_y], dtype=np.float64)   # (1,)
             self.y_ref = y_val
+            y_val -= self.y_ref
             self.pos_ref = False
 
         try:  
