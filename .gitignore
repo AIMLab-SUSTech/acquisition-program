@@ -9,5 +9,4 @@ __pycache__/
 *.ipr
 *.iws
 *.png
-*.dll
 data
