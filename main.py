@@ -7,6 +7,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import traceback
 import h5py
+import shutil
 
 # PyQt6 导入
 from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
@@ -936,15 +937,43 @@ class LogicWindow(ModernUI):
             if reply == QMessageBox.StandardButton.Yes:
                 return False
             else:
-                # No 意味着取消操作
-                return False
-        
+                confirm = QMessageBox.question(
+                    self, 
+                    "确认目录", 
+                    f"是否进行覆写？(不覆写将追加到已存在文件)",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if confirm == QMessageBox.StandardButton.Yes:
+                    self.log_info("确认进行覆写")
+                    if os.path.exists(current_dir):
+                        shutil.rmtree(current_dir)
+                        self.log_info("已删除已存在文件")
+                    return True
+                else:
+                    return True
+
+        if os.path.exists(os.path.join(current_dir, "scandata.h5")):
+            confirm = QMessageBox.question(
+                    self, 
+                    "确认目录", 
+                    f"是否进行覆写？(不覆写将追加到已存在文件)",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+            if confirm == QMessageBox.StandardButton.Yes:
+                self.log_info("确认进行覆写")
+                if os.path.exists(current_dir):
+                    shutil.rmtree(current_dir)
+                    self.log_info("已删除已存在文件")
+                return True
+            else:
+                return True
+
         # 3. 更新并确保目录存在
         self.save_dir = current_dir
+        self.default_save_dir = self.save_dir
         if not os.path.exists(self.save_dir):
             try:
                 os.makedirs(self.save_dir)
-                self.default_save_dir = self.save_dir
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"无法创建目录:\n{e}")
                 return False
@@ -1010,6 +1039,8 @@ class LogicWindow(ModernUI):
                     self.log_error(f"暗场保存失败: {e}")
             else:
                 self.log_info("采集已取消")
+                self.btn_cap.setEnabled(True)  # 释放按钮
+                self.btn_cap.setText("采集")
                 return
         
         if self.dark_frame is not None:
@@ -1024,6 +1055,8 @@ class LogicWindow(ModernUI):
                 pass
             else:
                 self.log_info("采集已取消")
+                self.btn_cap.setEnabled(True)  # 释放按钮
+                self.btn_cap.setText("采集")
                 return
 
         # 4. 设置文件名
