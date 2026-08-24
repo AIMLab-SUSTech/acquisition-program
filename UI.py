@@ -131,7 +131,7 @@ class ModernUI(QMainWindow):
         g_dev = QGroupBox("1. 设备连接"); l_dev = QGridLayout()
         l_dev.setContentsMargins(5, 10, 5, 10)
         l_dev.addWidget(QLabel("相机:"), 0, 0)
-        self.combo_camera = self.mk_combo(["Hik", "IDS", "Galaxy", "QHY", "PCO"])
+        self.combo_camera = self.mk_combo(["PE", "Hik", "IDS", "Galaxy", "QHY", "PCO"])
         l_dev.addWidget(self.combo_camera, 0, 1)
         
         # [修复] 显式赋值给 self
@@ -170,8 +170,8 @@ class ModernUI(QMainWindow):
         # 4. ROI
         g_roi = QGroupBox("4. 采集区域与偏移"); l_roi = QGridLayout()
         h_sz = QHBoxLayout()
-        self.roi_w = QLineEdit("1024"); self.roi_w.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.roi_h = QLineEdit("1024"); self.roi_h.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.roi_w = QLineEdit("1024"); self.roi_w.setAlignment(Qt.AlignmentFlag.AlignRight); self.roi_w.editingFinished.connect(lambda: print(f"更新宽: {self.roi_w.text()}"))
+        self.roi_h = QLineEdit("1024"); self.roi_h.setAlignment(Qt.AlignmentFlag.AlignRight); self.roi_h.editingFinished.connect(lambda: print(f"更新高: {self.roi_h.text()}"))
         h_sz.addWidget(self.roi_w); h_sz.addWidget(QLabel("x")); h_sz.addWidget(self.roi_h)
         l_roi.addWidget(QLabel("Size W/H:"), 0, 0); l_roi.addLayout(h_sz, 0, 1)
         

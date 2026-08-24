@@ -47,6 +47,9 @@ class DeviceLoader(QThread):
                     case "Hik":
                         from hik import HikrobotCamera
                         device_instance = HikrobotCamera()
+                    case "PE":
+                        from PECamera import PECamera
+                        device_instance = PECamera()
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -1165,11 +1168,14 @@ class LogicWindow(ModernUI):
         if self.pos_ref == True:
             x_val = np.array([cur_x], dtype=np.float64)   # (1,)
             self.x_ref = x_val
-            x_val -= self.x_ref
             y_val = np.array([cur_y], dtype=np.float64)   # (1,)
             self.y_ref = y_val
-            y_val -= self.y_ref
             self.pos_ref = False
+
+        x_val = np.array([cur_x], dtype=np.float64)
+        x_val -= self.x_ref
+        y_val = np.array([cur_y], dtype=np.float64)
+        y_val -= self.y_ref
 
         try:  
             with h5py.File(h5_path, 'a') as f:
