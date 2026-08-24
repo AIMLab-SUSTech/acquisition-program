@@ -1209,10 +1209,10 @@ class LogicWindow(ModernUI):
                     f["data"][n] = frame
 
                     f["x"].resize(n + 1, axis=0)
-                    f["x"][n] = cur_x - self.x_ref
+                    f["x"][n] = x_val
 
                     f["y"].resize(n + 1, axis=0)
-                    f["y"][n] = cur_y - self.y_ref
+                    f["y"][n] = y_val
 
                 f.attrs['wavelength'] = np.array([float(self.wavelength_spin.text())])
                 # f.attrs['pixel_size'] = np.array([float(self.pixel_size.text())]) 有问题
