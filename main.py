@@ -1264,14 +1264,8 @@ class LogicWindow(ModernUI):
             self.log_error("相机未连接")
             return
         
-        default_name = f"image_{time.strftime('%H%M%S')}"
-        filename, ok = QInputDialog.getText(
-            self, "保存当前视图", "请输入文件名:", text=default_name
-        )
-        
-        if ok and filename.strip():
-            final_name = filename.strip()
-            
+        final_name = "scandata"
+        if filename.strip(): 
             msg = QMessageBox(None)
             msg.setWindowTitle("采集检查")
             msg.setText("是否需要采集暗场图")
