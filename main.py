@@ -47,9 +47,11 @@ class DeviceLoader(QThread):
                     case "Hik":
                         from hik import HikrobotCamera
                         device_instance = HikrobotCamera()
-                    case "PE":
-                        from PECamera import PECamera
-                        device_instance = PECamera()
+                    case "SSZN":
+                        from SSZNCamera import SSZNCamera
+                        device_instance = SSZNCamera()
+                        if not device_instance.connect():
+                            raise RuntimeError("SSZN 相机连接失败")
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -378,7 +380,7 @@ class LogicWindow(ModernUI):
         self.cmi_dark = None
         self.save_dir = self.default_save_dir
         self.pixel_size = 3.45e-3
-        self.bit_depth = None
+        self.bit_depth = 16
 
         # --- 3. 信号绑定 ---
         self.btn_open_cam.clicked.connect(self.start_init_camera)
