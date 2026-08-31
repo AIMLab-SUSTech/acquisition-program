@@ -240,7 +240,7 @@ class SLStreamLink:
     # ==============================================
     # 强制切换工作目录到项目根目录
     # ==============================================
-        lib_dir = r"C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program\dll\PE\extern\lib"
+        lib_dir = os.path.join(current_folder, "dll", "PE", "extern", "lib")
         os.chdir(lib_dir)
 
     # ==============================================
@@ -341,15 +341,15 @@ class SLStreamLink:
         self.dll.SLIF_SetCommand.restype = c_int
 
         # 设置整数参数
-        self.dll.SLIF_SetInteger.argtypes = [c_void_p, c_char_p, ctypes.c_longlong, c_int]
+        self.dll.SLIF_SetInteger.argtypes = [c_void_p, c_char_p, ctypes.c_long, c_int]
         self.dll.SLIF_SetInteger.restype = c_int
 
         # 获取整数参数
-        self.dll.SLIF_GetInteger.argtypes = [c_void_p, c_char_p, ctypes.POINTER(c_longlong), c_int]
+        self.dll.SLIF_GetInteger.argtypes = [c_void_p, c_char_p, ctypes.POINTER(c_long), c_int]
         self.dll.SLIF_GetInteger.restype = c_int
 
         # 获取枚举项
-        self.dll.SLIF_GetEnumItems.argtypes = [c_void_p, c_char_p, ctypes.POINTER(SLEnumItem), ctypes.POINTER(c_longlong)]
+        self.dll.SLIF_GetEnumItems.argtypes = [c_void_p, c_char_p, ctypes.POINTER(SLEnumItem), ctypes.POINTER(c_long)]
         self.dll.SLIF_GetEnumItems.restype = c_int
 
         # 设置浮点参数
@@ -563,7 +563,7 @@ class SLStreamLink:
         Returns:
             tuple: (返回码, 参数值)
         """
-        value = c_longlong()
+        value = c_long()
         ret = self.dll.SLIF_GetInteger(dev_handle, feature, byref(value), val_type)
         if ret == RTNCODE.OK:
             return ret, value.value

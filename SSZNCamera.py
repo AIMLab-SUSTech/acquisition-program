@@ -516,7 +516,7 @@ class SSZNCamera(Camera):
             return
 
         # Width
-        width = ctypes.c_longlong(0)
+        width = ctypes.c_long(0)
 
         ret = self.sl.dll.SLIF_GetInteger(
             self.m_deviceHandle,
@@ -529,7 +529,7 @@ class SSZNCamera(Camera):
             self.width = width.value
 
         # Height
-        height = ctypes.c_longlong(0)
+        height = ctypes.c_long(0)
 
         ret = self.sl.dll.SLIF_GetInteger(
             self.m_deviceHandle,
@@ -587,7 +587,7 @@ class SSZNCamera(Camera):
         if not self.m_deviceHandle:
             return []
 
-        ecount = ctypes.c_longlong(0)
+        ecount = ctypes.c_long(0)
 
         ret = self.sl.dll.SLIF_GetEnumItems(
             self.m_deviceHandle,
@@ -675,7 +675,7 @@ class SSZNCamera(Camera):
         ret = self.sl.dll.SLIF_SetInteger(
             self.m_deviceHandle,
             b"SensorMode",
-            ctypes.c_longlong(int(mode)),
+            ctypes.c_long(int(mode)),
             PARAM_VALUE_TYPE.PARAM_VALUE_ENUM
         )
 
@@ -786,7 +786,7 @@ class SSZNCamera(Camera):
         ret = self.sl.dll.SLIF_SetInteger(
             self.m_deviceHandle,
             SlDefineParam.MODE,
-            ctypes.c_longlong(int(mode)),
+            ctypes.c_long(int(mode)),
             PARAM_VALUE_TYPE.PARAM_VALUE_INT
         )
 
@@ -969,7 +969,7 @@ class SSZNCamera(Camera):
         ret = dll.SLIF_SetInteger(
             h,
             SlDefineParam.REC_MEDIA,
-            ctypes.c_longlong(int(media)),
+            ctypes.c_long(int(media)),
             PARAM_VALUE_TYPE.PARAM_VALUE_ENUM
         )
 
@@ -981,7 +981,7 @@ class SSZNCamera(Camera):
         ret = dll.SLIF_SetInteger(
             h,
             SlDefineParam.CACHE_FRAMES,
-            ctypes.c_longlong(int(cache_frames)),
+            ctypes.c_long(int(cache_frames)),
             PARAM_VALUE_TYPE.PARAM_VALUE_INT
         )
 
@@ -1019,7 +1019,7 @@ class SSZNCamera(Camera):
             ret = dll.SLIF_SetInteger(
                 h,
                 SlDefineParam.RECORD_DISK_RECFRAMES,
-                ctypes.c_longlong(int(max_disk_frames)),
+                ctypes.c_long(int(max_disk_frames)),
                 PARAM_VALUE_TYPE.PARAM_VALUE_INT
             )
 
@@ -1375,42 +1375,67 @@ class SSZNCamera(Camera):
         return 0.0
 
     # ==========================================================
-    # 20. 关闭相机
+    # 20. 断开连接 (清理 SDK 残留状态)
     # ==========================================================
-    def close(self):
+    def disconnect(self):
         """
-        断开设备 (与 PE 示例 do_disconnect 一致):
-          先停止取流 (SlParamMode → IDLE), 再关闭设备句柄。
+        断开设备并强制清理 SDK 内部状态，确保下次连接时无残留:
+          1) 无论 m_stream_active 如何，强制 SLIF_StopCapture
+          2) 强制 SlParamMode → IDLE
+          3) SLIF_CloseDevice
+          4) 重置全部实例状态
         """
 
-        # 停止采集
-        if self.m_connect:
+        if not self.m_deviceHandle:
+            return
 
-            try:
-                self.stop_acquisition()
-            except Exception:
-                pass
+        h = self.m_deviceHandle
 
-        # 关闭设备
-        if self.m_deviceHandle:
+        # ① 强制停止取流 (即使 m_stream_active=False，也必须调用，
+        #    以清除 SDK 内部残留的 CapMode / StreamState)
+        try:
+            self.sl.dll.SLIF_StopCapture(h)
+        except Exception:
+            pass
 
-            try:
-                self.sl.dll.SLIF_CloseDevice(
-                    self.m_deviceHandle
-                )
-            except Exception:
-                pass
+        # ② 强制切回 IDLE 模式 (与 PE 示例 do_stop_capture 一致)
+        try:
+            self.sl.dll.SLIF_SetInteger(
+                h, SlDefineParam.MODE,
+                ctypes.c_long(CAMERA_MODE_IDLE),
+                PARAM_VALUE_TYPE.PARAM_VALUE_INT,
+            )
+        except Exception:
+            pass
 
+        # ③ 关闭设备句柄
+        try:
+            self.sl.dll.SLIF_CloseDevice(h)
+        except Exception:
+            pass
+
+        # ④ 重置全部状态
         self.m_deviceHandle = None
         self.m_connect = False
         self.m_stream_active = False
 
-        # 释放 SLStreamLink
+        print("SSZN: 已断开连接并清理 SDK 状态")
+
+    # ==========================================================
+    # 21. 关闭相机 (释放 SDK)
+    # ==========================================================
+    def close(self):
+        """
+        完整关闭流程:
+          disconnect() → 清理设备状态
+          sl.uninit()  → 释放 DLL / 句柄
+        """
+
+        self.disconnect()
+
         try:
             self.sl.uninit()
         except Exception:
             pass
 
-        print(
-            "SSZN: 相机已关闭"
-        )
+        print("SSZN: 相机已关闭")
