@@ -1233,57 +1233,51 @@ class LogicWindow(ModernUI):
             self.log_error("相机未连接")
             return
         
-        default_name = f"image_{time.strftime('%H%M%S')}"
-        filename, ok = QInputDialog.getText(
-            self, "保存当前视图", "请输入文件名:", text=default_name
-        )
-        
-        if ok and filename.strip():
-            final_name = filename.strip()
+        final_name = 'scandata'
             
-            msg = QMessageBox(None)
-            msg.setWindowTitle("采集检查")
-            msg.setText("是否需要采集暗场图")
-            msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            btn_no = msg.button(QMessageBox.StandardButton.No)
+        msg = QMessageBox(None)
+        msg.setWindowTitle("采集检查")
+        msg.setText("是否需要采集暗场图")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        btn_no = msg.button(QMessageBox.StandardButton.No)
 
+        if self.cmi_dark is None:
+            btn_no.setEnabled(False)
+            btn_no.setText("No (已禁用)")
+        result = msg.exec()
+
+        if result == QMessageBox.StandardButton.Yes:
+            self.cmi_dark = self.camera.read_newest_image()
             if self.cmi_dark is None:
-                btn_no.setEnabled(False)
-                btn_no.setText("No (已禁用)")
-            result = msg.exec()
+                self.log_error("暗场采集失败：无法获取图像")
+                return
+            self.cmi_dark = self.crop_image(self.cmi_dark)
+            if self.cmi_dark is None:
+                self.log_error("暗场采集失败：图像裁剪失败") 
+                return
 
-            if result == QMessageBox.StandardButton.Yes:
-                self.cmi_dark = self.camera.read_newest_image()
-                if self.cmi_dark is None:
-                    self.log_error("暗场采集失败：无法获取图像")
-                    return
-                self.cmi_dark = self.crop_image(self.cmi_dark)
-                if self.cmi_dark is None:
-                    self.log_error("暗场采集失败：图像裁剪失败") 
-                    return
+            if not os.path.exists(self.save_dir):
+                os.makedirs(self.save_dir)
+            try:
+                save_path = self.save_dir + '/raw_data/' + final_name + '_dark.tif'
+                if self.cmi_dark.dtype == np.uint16 or self.cmi_dark.dtype == np.uint8:
+                    Image.fromarray(self.cmi_dark).save(save_path)
+                else:
+                    Image.fromarray(self.cmi_dark.astype(np.uint16)).save(save_path)
+            except Exception as e:
+                self.log_error(f"暗场保存失败: {e}")
 
-                if not os.path.exists(self.save_dir):
-                    os.makedirs(self.save_dir)
-                try:
-                    save_path = self.save_dir + '/' + final_name + '_dark.tif'
-                    if self.cmi_dark.dtype == np.uint16 or self.cmi_dark.dtype == np.uint8:
-                        Image.fromarray(self.cmi_dark).save(save_path)
-                    else:
-                        Image.fromarray(self.cmi_dark.astype(np.uint16)).save(save_path)
-                except Exception as e:
-                    self.log_error(f"暗场保存失败: {e}")
-
-                reply = QMessageBox.question(
-                self, 
-                "暗场采集完成", 
-                "是否继续采集衍射图？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
-                )
+            reply = QMessageBox.question(
+            self, 
+            "暗场采集完成", 
+            "是否继续采集衍射图？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+            )
                 
-                if reply == QMessageBox.StandardButton.No:
-                    self.log_info("采集已取消")
-                    return
+            if reply == QMessageBox.StandardButton.No:
+                self.log_info("采集已取消")
+                return
                      
             roi_img, cur_x, cur_y = self.save_current_frame(base_name=final_name)
             save_img = roi_img.astype(np.float32) - self.cmi_dark.astype(np.float32)
