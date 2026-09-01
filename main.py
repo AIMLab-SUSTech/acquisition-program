@@ -1158,7 +1158,7 @@ class LogicWindow(ModernUI):
         将当前扫描数据写入 H5 文件。(img_data, cur_x, cur_y, wl)
         """
         if not h5_path:
-            h5_path = os.path.join(self.save_dir, "raw_data", self.current_scan_h5_name)
+            h5_path = os.path.join(self.save_dir, self.current_scan_h5_name)
         try:
             os.makedirs(os.path.dirname(h5_path), exist_ok=True)
         except:
