@@ -1267,7 +1267,7 @@ class LogicWindow(ModernUI):
             return
         
         final_name = "scandata"
-        if filename.strip(): 
+        if final_name.strip(): 
             msg = QMessageBox(None)
             msg.setWindowTitle("采集检查")
             msg.setText("是否需要采集暗场图")
@@ -1292,7 +1292,7 @@ class LogicWindow(ModernUI):
                 if not os.path.exists(self.save_dir):
                     os.makedirs(self.save_dir)
                 try:
-                    save_path = self.save_dir + '/raw_data/' + final_name + '_dark.tif'
+                    save_path = f"{self.save_dir}/raw_data/{final_name}_dark.tif"
                     if self.cmi_dark.dtype == np.uint16 or self.cmi_dark.dtype == np.uint8:
                         Image.fromarray(self.cmi_dark).save(save_path)
                     else:
