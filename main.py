@@ -16,6 +16,7 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
 from UI import ModernUI
+import conexcc_controller
 
 # =========================================================
 #  硬件加载线程
@@ -52,6 +53,9 @@ class DeviceLoader(QThread):
                         device_instance = SSZNCamera()
                         if not device_instance.connect():
                             raise RuntimeError("SSZN 相机连接失败")
+                    case "PI":
+                        from pi_camera import PICamera
+                        device_instance = PICamera()
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -59,6 +63,10 @@ class DeviceLoader(QThread):
                         from motion_controller import xps
                         device_instance = xps(IP='192.168.254.254')
                         device_instance.init_groups(['Group1', 'Group2'])
+                    case "newports":
+                        from conexcc_controller import ConexCCController
+                        # todo port 
+                        device_instance = ConexCCController()
                     case "AMI":
                         from Ami import PvcsvrController
                         device_instance = PvcsvrController(exe_path="./dll/Ami/pvcsvr.exe")
