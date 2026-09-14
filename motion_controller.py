@@ -9,7 +9,16 @@ class MotionController(ABC):
 
     @abstractmethod
     def move_by(self, distance, axis):
+        """移动指定轴。移动命令下发失败时必须抛出异常（不允许静默吞掉）。"""
         pass
+
+    def wait_idle(self, timeout=30.0):
+        """等待所有轴停止移动。返回 True 表示已静止，False 表示超时。"""
+        raise NotImplementedError('wait_idle not implemented')
+
+    def stop_all(self):
+        """停止所有轴移动。"""
+        raise NotImplementedError('stop_all not implemented')
 
 
 class smartact(MotionController):
@@ -26,7 +35,15 @@ class smartact(MotionController):
         self.motion.home(axis=axis)
 
     def move_by(self, distance, axis=0):
+        # pylablib 的 move_by 内部失败即抛异常，向上传播给调用方
         self.motion.move_by(distance / 1000, axis=axis)
+
+    def wait_idle(self, timeout=30.0):
+        try:
+            self.motion.wait_move('all', timeout=timeout)
+            return True
+        except Exception:
+            return False
 
     def stop_all(self):
         if self.motion.is_moving(axis=0):
@@ -54,12 +71,11 @@ class xps(MotionController):
                     self.xps.initialize_group(i)
                     time.sleep(0.5)
                     self.xps.home_group(i)
-                    # time.sleep(0.5)
                     self.groups.append(i)
         except Exception as e:
             print(f'初始化xps异常，请检查是否重复初始化:{e}')
-            self.groups = groups
-            print
+            # 初始化失败时不登记组，保证后续 move_by 显式报错而不是静默无效
+            self.groups = []
 
     def init_all_groups(self):
         self.xps.initialize_allgroups()
@@ -69,10 +85,24 @@ class xps(MotionController):
             self.xps.kill_group(group)
 
     def move_by(self, distance: int, axis: int, relative: bool = True):
-        try:
-            self.xps.move_stage(value=distance, stage=f'{self.groups[axis]}.Pos', relative=relative)
-        except Exception as e:
-            print(f'xps移动失败：{e}')
+        if axis >= len(self.groups):
+            raise RuntimeError(f'xps轴序号越界：axis={axis}，已初始化组={self.groups}')
+        # 失败时抛出异常，由调用方决定是否中止扫描
+        self.xps.move_stage(value=distance, stage=f'{self.groups[axis]}.Pos', relative=relative)
+
+    def wait_idle(self, timeout=30.0, poll_interval=0.05):
+        """轮询各组状态字符串，直到不含 'Moving'（不区分大小写）。超时返回 False。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                status = self.xps.get_group_status()
+            except Exception:
+                time.sleep(poll_interval)
+                continue
+            if not any('mov' in str(status.get(g, '')).lower() for g in self.groups):
+                return True
+            time.sleep(poll_interval)
+        return False
 
     def status_report(self):
         return self.xps.status_report()
@@ -87,8 +117,10 @@ from ctypes import create_string_buffer, c_uint
 
 
 class nators(MotionController):
-    def __init__(self):
+    def __init__(self, settle_time=1.0):
         super().__init__()
+        # NTControl 封装未暴露运动状态查询，wait_idle 用固定沉降时间代替
+        self.settle_time = settle_time
         dll_path = 'C:/Windows/System32/NTControl.dll'
         # 加载 DLL
         try:
@@ -173,22 +205,22 @@ class nators(MotionController):
             channel(正放): 2 垂直方向 1 水平方向 0 前后方向 """
 
         channel = [1, 2, 0]
-        try:
-            if self.system_index is None:
-                print("系统未打开，无法移动")
-                return
+        if self.system_index is None:
+            raise RuntimeError("nators系统未打开，无法移动")
 
-            diff_nanometers = int(distance * 1e6)
+        diff_nanometers = int(distance * 1e6)
 
-            result = self.stage_dll.NT_GotoPositionRelative_S(self.system_index, channel[axis],
-                                                              ctypes.c_int(diff_nanometers))
+        result = self.stage_dll.NT_GotoPositionRelative_S(self.system_index, channel[axis],
+                                                          ctypes.c_int(diff_nanometers))
 
-            if result == 0:
-                print(f"成功将通道 {channel[axis]} 移动 {distance} 毫米")
-            else:
-                print(f"错误: 无法移动通道 {channel[axis]}，错误代码: {result}")
-        except Exception as e:
-            print(f"移动定位台时发生错误: {e}")
+        if result != 0:
+            raise RuntimeError(f"nators移动失败：通道 {channel[axis]}，错误代码 {result}")
+        print(f"成功将通道 {channel[axis]} 移动 {distance} 毫米")
+
+    def wait_idle(self, timeout=30.0):
+        # NTControl 封装未暴露运动状态查询，用固定沉降时间代替（保守值，可在构造时调整）
+        time.sleep(min(self.settle_time, timeout))
+        return True
 
 
 if __name__ == "__main__":

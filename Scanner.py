@@ -6,11 +6,16 @@ from matplotlib.cm import ScalarMappable
 import random
 import os
 
+# Vogel 螺旋 r=c*sqrt(i) 的尺度常数：c=1 时中位最近邻距离（N=4000 数值计算）。
+# 取 c = step / VOGEL_NEIGHBOR_SCALE 使螺旋的局部点间距约等于扫描步长（均匀密度）。
+VOGEL_NEIGHBOR_SCALE = 1.688927250726361
+
 
 class Scanner:
     """
     Ptychography扫描器类，用于生成标准的扫描点位置。
-    支持多种扫描模式：圆形(round)、矩形(rectangle)和费马螺旋线(fermat)。
+    支持多种扫描模式：圆形(round)、矩形(rectangle)、费马螺旋线(fermat，正确黄金角)、
+    辐条螺旋(spoke，旧版费马实现，保留用于对比，别名 'fermat_old')。
     可选添加随机偏移。
     支持将扫描点位置保存为npy格式。
     """
@@ -21,7 +26,8 @@ class Scanner:
         参数:
             step: 扫描步长
             scan_num: 扫描数量/范围
-            mode: 扫描模式，可选 'round', 'rectangle', 'fermat'
+            mode: 扫描模式，可选 'round', 'rectangle', 'fermat'（正确黄金角）,
+                  'spoke'（辐条螺旋，旧版费马实现，保留用于对比；别名 'fermat_old'）
             nth: 圆形扫描模式下控制基础角度数目
             random_offset: 是否添加随机偏移
             offset_ratio: 随机偏移比例，相对于step的比例
@@ -105,35 +111,58 @@ class Scanner:
                     pos_absolute.append((x, y))
                     
         elif self.mode == 'fermat':
-            # 费马螺旋线扫描
-            # 黄金角，约137.5度
-            golden_angle = math.pi / self.nth
-            
+            # 费马螺旋线扫描（Vogel 模型）
+            # 黄金角 = 2*pi/phi^2 = pi*(3-sqrt(5)) ≈ 2.39996 rad（≈137.5度）
+            # 半径 r = c*sqrt(i)，c = step/VOGEL_NEIGHBOR_SCALE，
+            # 使局部最近邻间距约等于 step（均匀点密度，见文件头部常数注释）
+            golden_angle = math.pi * (3.0 - math.sqrt(5.0))
+
             # 计算需要的点数，确保覆盖扫描区域
             scan_radius = self.step * self.scan_num
-            # area = math.pi * scan_radius**2
-            # points_count = int(area / (self.step**2))
-            
+            c = self.step / VOGEL_NEIGHBOR_SCALE
+
             pos_absolute = [(0.0, 0.0)]  # 起始于原点
-            
-            # for i in range(1, points_count):
+
             i = 0
             while True:
                 i += 1
-                # 费马螺旋线参数方程
                 theta = i * golden_angle
-                r = self.step * math.sqrt(theta)
-                
-                
+                r = c * math.sqrt(i)
+
                 x = r * math.cos(theta)
                 y = r * math.sin(theta)
-                
+
                 # 检查是否超出扫描区域
                 if math.sqrt(x**2 + y**2) > scan_radius:
                     break
-                    
+
                 pos_absolute.append((x, y))
-        
+
+        elif self.mode in ('spoke', 'fermat_old'):
+            # 'spoke'：辐条螺旋（旧版费马实现改名保留，勿删）；'fermat_old' 为旧别名
+            # 角度步长误用 math.pi / self.nth（nth=6 时为 30 度而非 137.5 度），
+            # 点沿 12 条辐条聚集、覆盖不均匀。修正版见 'fermat' 分支。
+            golden_angle = math.pi / self.nth
+
+            scan_radius = self.step * self.scan_num
+
+            pos_absolute = [(0.0, 0.0)]  # 起始于原点
+
+            i = 0
+            while True:
+                i += 1
+                theta = i * golden_angle
+                r = self.step * math.sqrt(theta)
+
+                x = r * math.cos(theta)
+                y = r * math.sin(theta)
+
+                # 检查是否超出扫描区域
+                if math.sqrt(x**2 + y**2) > scan_radius:
+                    break
+
+                pos_absolute.append((x, y))
+
         # 应用随机偏移（如果启用）
         pos_absolute = self._apply_random_offset(pos_absolute)
             
