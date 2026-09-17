@@ -2,6 +2,7 @@ from abc import ABC
 import sys
 import ctypes
 from ctypes import *
+from pathlib import Path
 import numpy as np
 from abc import ABC, abstractmethod
 
@@ -156,7 +157,8 @@ class VSyCamera(Camera):
     def _initialize_camera(self):
         """初始化相机连接"""
         # 加载动态库（路径需要根据实际环境调整）
-        self.VsyGevLib = cdll.LoadLibrary("C:/Users/JKHKOJKLJ/Documents/GitHub/acquisition-program/dll/vsy/VsyCameraControl.dll")
+        dll_path = Path(__file__).resolve().with_name("VsyCameraControl.dll")
+        self.VsyGevLib = cdll.LoadLibrary(str(dll_path))
         self.VsyGevLib.VSY_GigECam_SetFeature.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_double, ctypes.c_ushort]
 
         # 搜索设备
