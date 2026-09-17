@@ -16,7 +16,6 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
 from UI import ModernUI
-import conexcc_controller
 
 # =========================================================
 #  硬件加载线程
@@ -53,9 +52,12 @@ class DeviceLoader(QThread):
                         device_instance = SSZNCamera()
                         if not device_instance.connect():
                             raise RuntimeError("SSZN 相机连接失败")
-                    case "PI":
-                        from pi_camera import PICamera
-                        device_instance = PICamera()
+                    case "SC":
+                        from SCSDKCamera import SCSDKCamera, find_camera_index
+                        sc_index = find_camera_index()
+                        if sc_index < 0:
+                            raise RuntimeError("SC 相机连接失败：未发现可用相机（已跳过虚拟相机）")
+                        device_instance = SCSDKCamera(sc_index)
                         
             elif self.device_type == 'stage':
                 match(self.device_name):

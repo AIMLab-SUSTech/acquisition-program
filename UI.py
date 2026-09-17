@@ -3,7 +3,7 @@ import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QGroupBox, QFormLayout, QLabel, QLineEdit, QPushButton, 
                              QComboBox, QCheckBox, QDoubleSpinBox, QTabWidget, QGridLayout, 
-                             QFrame, QPlainTextEdit, QSizePolicy)
+                             QFrame, QPlainTextEdit, QSizePolicy, QScrollArea, QSplitter)
 from PyQt6.QtCore import Qt
 
 # ==========================================
@@ -32,7 +32,7 @@ class StageControlWidget(QWidget):
         pos_layout = QHBoxLayout()
         self.lbl_x = QLabel("X: 0.000 mm"); self.lbl_x.setStyleSheet(STYLE_COORD)
         self.lbl_y = QLabel("Y: 0.000 mm"); self.lbl_y.setStyleSheet(STYLE_COORD)
-        self.btn_zero = QPushButton("归零"); self.btn_zero.setFixedSize(50, 25)
+        self.btn_zero = QPushButton("归零"); self.btn_zero.setMinimumSize(50, 28)
         
         pos_layout.addWidget(self.lbl_x); pos_layout.addSpacing(20)
         pos_layout.addWidget(self.lbl_y); pos_layout.addStretch()
@@ -76,7 +76,8 @@ class StageControlWidget(QWidget):
         c_layout.addStretch(); layout.addLayout(c_layout)
 
     def mk_btn(self, text):
-        b = QPushButton(text); b.setFixedSize(40, 40); b.setStyleSheet(STYLE_BTN_DIR)
+        b = QPushButton(text); b.setMinimumSize(40, 40); b.setStyleSheet(STYLE_BTN_DIR)
+        b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         return b
 
 # ==========================================
@@ -86,7 +87,13 @@ class ModernUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("采集控制系统")
-        self.resize(1280, 950)
+        screen = QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            self.resize(min(1280, max(640, int(available.width() * 0.9))),
+                        min(950, max(560, int(available.height() * 0.9))))
+        else:
+            self.resize(1100, 760)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
         central = QWidget(); self.setCentralWidget(central)
@@ -103,7 +110,9 @@ class ModernUI(QMainWindow):
         img_layout.addWidget(lbl_img)
         
         # 右侧面板
-        self.right_panel = QWidget(); self.right_panel.setFixedWidth(400)
+        self.right_panel = QWidget()
+        self.right_panel.setMinimumWidth(300); self.right_panel.setMaximumWidth(520)
+        self.right_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         r_layout = QVBoxLayout(self.right_panel)
         r_layout.setContentsMargins(5, 0, 5, 0); r_layout.setSpacing(8)
 
@@ -113,25 +122,49 @@ class ModernUI(QMainWindow):
         self.setup_scan_tab() 
         self.tabs.addTab(self.tab_hardware, "硬件控制")
         self.tabs.addTab(self.tab_scan, "自动扫描")
-        r_layout.addWidget(self.tabs); r_layout.addStretch() 
+        # 按表单的实际最小宽度确定右侧栏，避免关闭横向滚动后裁掉最右侧控件。
+        content_width = max(
+            self.tab_hardware.widget().minimumSizeHint().width(),
+            self.tab_scan.widget().minimumSizeHint().width(),
+        )
+        self.control_panel_width = min(520, max(420, content_width + 40))
+        self.right_panel.setFixedWidth(self.control_panel_width)
+        self.tabs.setMinimumHeight(120)
+        r_layout.addWidget(self.tabs, 1)
 
         # 底部面板 (光子数 / 按钮 / 日志)
-        r_layout.addWidget(self.create_photon_panel())
-        r_layout.addWidget(self.create_big_btns())
-        r_layout.addWidget(self.create_log_panel())
+        r_layout.addWidget(self.create_photon_panel(), 0)
+        self.action_bar = self.create_big_btns()
+        r_layout.addWidget(self.action_bar, 0)
+        r_layout.addWidget(self.create_log_panel(), 0)
 
-        main_layout.addWidget(self.image_area); main_layout.addWidget(self.right_panel)  
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.addWidget(self.image_area); self.main_splitter.addWidget(self.right_panel)
+        self.main_splitter.setStretchFactor(0, 1); self.main_splitter.setStretchFactor(1, 0)
+        self.main_splitter.setSizes([
+            max(320, self.width() - self.control_panel_width),
+            self.control_panel_width,
+        ])
+        # 右侧控制区保持稳定宽度，不允许用户左右拖动分隔条。
+        self.main_splitter.setHandleWidth(0)
+        self.main_splitter.handle(1).setEnabled(False)
+        main_layout.addWidget(self.main_splitter)
 
     def setup_hardware_tab(self):
-        self.tab_hardware = QWidget()
-        layout = QVBoxLayout(self.tab_hardware)
+        self.tab_hardware = QScrollArea(); self.tab_hardware.setWidgetResizable(True)
+        self.tab_hardware.setFrameShape(QFrame.Shape.NoFrame)
+        self.tab_hardware.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        hardware_content = QWidget(); hardware_content.setMinimumWidth(0)
+        self.tab_hardware.setWidget(hardware_content)
+        layout = QVBoxLayout(hardware_content)
         layout.setSpacing(10); layout.setContentsMargins(10, 10, 10, 10)
 
         # 1. 连接
         g_dev = QGroupBox("1. 设备连接"); l_dev = QGridLayout()
         l_dev.setContentsMargins(5, 10, 5, 10)
         l_dev.addWidget(QLabel("相机:"), 0, 0)
-        self.combo_camera = self.mk_combo(["PI", "SSZN", "Hik", "IDS", "Galaxy", "QHY", "PCO"])
+        self.combo_camera = self.mk_combo(["SC", "SSZN", "Hik", "IDS", "Galaxy", "QHY", "PCO"])
         l_dev.addWidget(self.combo_camera, 0, 1)
         
         # [修复] 显式赋值给 self
@@ -189,14 +222,18 @@ class ModernUI(QMainWindow):
 
     def setup_scan_tab(self):
         # [修复] 立即初始化，不使用 load_scan_tab_content 懒加载
-        self.tab_scan = QWidget()
-        layout = QVBoxLayout(self.tab_scan); layout.setSpacing(10)
+        self.tab_scan = QScrollArea(); self.tab_scan.setWidgetResizable(True)
+        self.tab_scan.setFrameShape(QFrame.Shape.NoFrame)
+        self.tab_scan.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scan_content = QWidget(); scan_content.setMinimumWidth(0)
+        self.tab_scan.setWidget(scan_content)
+        layout = QVBoxLayout(scan_content); layout.setSpacing(10)
         
         # 保存设置
         g_save = QGroupBox("保存设置"); l_save = QVBoxLayout(); l_save.setContentsMargins(10, 10, 10, 10)
         h_path = QHBoxLayout()
         self.save_dir_edit = QLineEdit("please change this to your own path"); h_path.addWidget(self.save_dir_edit)
-        self.btn_browse = QPushButton("..."); self.btn_browse.setFixedWidth(40); h_path.addWidget(self.btn_browse)
+        self.btn_browse = QPushButton("..."); self.btn_browse.setMinimumWidth(40); h_path.addWidget(self.btn_browse)
         l_save.addLayout(h_path); g_save.setLayout(l_save); layout.addWidget(g_save)
 
         # 扫描参数
@@ -214,7 +251,7 @@ class ModernUI(QMainWindow):
         
         self.btn_show_path = QPushButton("显示路径"); form.addRow(self.btn_show_path)
         self.lbl_scan_preview = QLabel("Preview Area")
-        self.lbl_scan_preview.setAlignment(Qt.AlignmentFlag.AlignCenter); self.lbl_scan_preview.setMinimumHeight(250)
+        self.lbl_scan_preview.setAlignment(Qt.AlignmentFlag.AlignCenter); self.lbl_scan_preview.setMinimumHeight(160)
         self.lbl_scan_preview.setStyleSheet("border: 1px dashed #aaa; background: #f9f9f9;")
         form.addRow(self.lbl_scan_preview); g_scan.setLayout(form); layout.addWidget(g_scan)
         layout.addStretch()
@@ -242,9 +279,9 @@ class ModernUI(QMainWindow):
     def create_big_btns(self):
         w = QWidget(); l = QGridLayout(w); l.setContentsMargins(0, 5, 0, 5)
         # 显式赋值
-        self.btn_live = QPushButton("👁 启动"); self.btn_live.setStyleSheet("background: #27ae60; color: white; font-weight: bold; height: 45px;")
-        self.btn_cap = QPushButton("🔴 采集"); self.btn_cap.setStyleSheet("background: #c0392b; color: white; font-weight: bold; height: 45px;")
-        self.btn_save = QPushButton("💾 保存"); self.btn_save.setStyleSheet("background: #2980b9; color: white; font-weight: bold; height: 45px;")
+        self.btn_live = QPushButton("👁 启动"); self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;min-height:40px;")
+        self.btn_cap = QPushButton("🔴 采集"); self.btn_cap.setStyleSheet("background:#c0392b;color:white;font-weight:bold;min-height:40px;")
+        self.btn_save = QPushButton("💾 保存"); self.btn_save.setStyleSheet("background:#2980b9;color:white;font-weight:bold;min-height:40px;")
         l.addWidget(self.btn_live, 0, 0); l.addWidget(self.btn_cap, 0, 1); l.addWidget(self.btn_save, 0, 2)
         
         aux = QHBoxLayout()
@@ -257,8 +294,9 @@ class ModernUI(QMainWindow):
     def create_log_panel(self):
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(0,0,0,0); l.setSpacing(0)
         l.addWidget(QLabel("系统日志:"))
-        self.txt_log = QPlainTextEdit(); self.txt_log.setReadOnly(True); self.txt_log.setFixedHeight(100)
-        self.txt_log.document().setMaximumBlockCount(1000)
+        self.txt_log = QPlainTextEdit(); self.txt_log.setReadOnly(True)
+        self.txt_log.setMinimumHeight(64); self.txt_log.setMaximumHeight(120)
+        self.txt_log.document().setMaximumBlockCount(500)
         l.addWidget(self.txt_log); return w
 
 if __name__ == "__main__":
