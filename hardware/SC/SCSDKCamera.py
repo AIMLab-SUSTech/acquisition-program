@@ -255,9 +255,9 @@ class SCSDKCamera(Camera):
                 pass
             self.is_grabbing = False
 
-    def read_newest_image(self, timeout_ms: int = 1000):
+    def getframe(self, timeout_ms: int = 1000):
         """
-        读取最新一帧图像
+        通过 SC_GetFrame 获取一帧图像
         :param timeout_ms: 超时时间（毫秒）
         :return: 2D numpy 图像数组 (uint8 或 uint16)，失败返回 None
         """
@@ -284,6 +284,10 @@ class SCSDKCamera(Camera):
             print(f"SCSDK 获取图像异常: {e}")
             return None
 
+    def read_newest_image(self, timeout_ms: int = 1000):
+        """兼容 Camera 基类的统一接口，SC 相机实际通过 getframe 取图。"""
+        return self.getframe(timeout_ms)
+
     def get_frame_period(self) -> float:
         """
         获取当前帧周期
@@ -307,7 +311,7 @@ class SCSDKCamera(Camera):
         was_grabbing = self.is_grabbing
         if not was_grabbing:
             self.start_acquisition()
-        image = self.read_newest_image()
+        image = self.getframe()
         if not was_grabbing:
             self.stop_acquisition()
         return image
@@ -632,7 +636,7 @@ if __name__ == "__main__":
     time.sleep(0.5)
 
     # 4. 读取最新一帧并查看属性
-    img = cam.read_newest_image()
+    img = cam.getframe()
     if img is not None:
         print(f"获取图像成功: 形状={img.shape}, 类型={img.dtype}, "
               f"最大值={img.max()}, 均值={img.mean():.2f}")
