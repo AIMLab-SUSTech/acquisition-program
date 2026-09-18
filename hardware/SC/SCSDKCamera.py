@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
+import threading
 import time
 from ctypes import *
 
@@ -149,6 +150,12 @@ class SCSDKCamera(Camera):
         self.is_open = False
         self.is_grabbing = False
         self._frame_callback_ref = None
+        self._user_frame_callback = None
+        self._callback_attached = False
+        self._frame_condition = threading.Condition()
+        self._latest_frame = None
+        self._latest_frame_id = None
+        self._callback_error = None
         self._current_bit_depth = None
 
         # 1. 初始化 SDK（同一进程内仅生效一次）
@@ -189,6 +196,8 @@ class SCSDKCamera(Camera):
 
         self.get_bit_depth()
         self.set_dpc()
+        if not self._ensure_async_callback():
+            raise RuntimeError("SCSDK 注册异步帧回调失败")
         print(f"SCSDK 相机已初始化 (Index: {camera_index}, 位深: {self.get_bit_depth()}bit)")
 
     # ========================== 核心抽象方法实现 ==========================
@@ -233,14 +242,23 @@ class SCSDKCamera(Camera):
             return 0.0
 
     def start_acquisition(self):
-        """开始图像流采集"""
+        """开始图像流采集，帧数据由 SDK 异步回调接收。"""
         if not self.is_open or self.is_grabbing:
             return
         try:
+            if not self._ensure_async_callback():
+                print("SCSDK 启动采集失败：异步帧回调未注册")
+                return
+
+            with self._frame_condition:
+                self._latest_frame = None
+                self._latest_frame_id = None
+                self._callback_error = None
+
             n_ret = self.sdk.SC_StartGrabbing()
             if n_ret == SC_OK:
                 self.is_grabbing = True
-                print("SCSDK 相机开始采集流...")
+                print("SCSDK 相机开始异步采集流...")
             else:
                 print(f"SCSDK 开始采集失败，错误码: {n_ret}")
         except Exception as e:
@@ -254,34 +272,38 @@ class SCSDKCamera(Camera):
             except Exception:
                 pass
             self.is_grabbing = False
+            with self._frame_condition:
+                self._frame_condition.notify_all()
 
     def getframe(self, timeout_ms: int = 1000):
         """
-        通过 SC_GetFrame 获取一帧图像
+        返回异步回调接收到的最新一帧图像。
+
+        未收到首帧时最多等待 timeout_ms；有缓存帧时立即返回。
         :param timeout_ms: 超时时间（毫秒）
-        :return: 2D numpy 图像数组 (uint8 或 uint16)，失败返回 None
+        :return: 2D numpy 图像数组的副本 (uint8 或 uint16)，失败返回 None
         """
         if not self.is_open:
             return None
 
         if not self.is_grabbing:
             self.start_acquisition()
+        if not self.is_grabbing:
+            return None
 
-        frame = SC_Frame()
-        try:
-            n_ret = self.sdk.SC_GetFrame(frame, timeout_ms)
-            if n_ret != SC_OK:
-                return None
+        timeout_s = max(0, timeout_ms) / 1000.0
+        deadline = time.monotonic() + timeout_s
+        with self._frame_condition:
+            while self._latest_frame is None and self.is_grabbing:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._frame_condition.wait(remaining)
 
-            image = _frame_to_numpy(frame)
-            self.sdk.SC_ReleaseFrame(frame)
-            return image
-        except Exception as e:
-            try:
-                self.sdk.SC_ReleaseFrame(frame)
-            except Exception:
-                pass
-            print(f"SCSDK 获取图像异常: {e}")
+            if self._latest_frame is not None:
+                return self._latest_frame.copy()
+            if self._callback_error is not None:
+                print(f"SCSDK 异步获取图像异常: {self._callback_error}")
             return None
 
     def read_newest_image(self, timeout_ms: int = 1000):
@@ -547,21 +569,60 @@ class SCSDKCamera(Camera):
 
     # ========================== 异步回调采集 ==========================
 
+    def _on_frame(self, p_frame, p_user):
+        """SDK 采集线程回调：立即复制帧数据，避免离开回调后访问失效内存。"""
+        if not p_frame:
+            return
+        try:
+            frame = p_frame.contents
+            image = _frame_to_numpy(frame)
+            if image is None:
+                return
+            frame_id = int(frame.frameInfo.frameId)
+            with self._frame_condition:
+                self._latest_frame = image
+                self._latest_frame_id = frame_id
+                self._callback_error = None
+                self._frame_condition.notify_all()
+        except Exception as e:
+            with self._frame_condition:
+                self._callback_error = e
+                self._frame_condition.notify_all()
+            return
+
+        user_callback = self._user_frame_callback
+        if user_callback is not None:
+            try:
+                user_callback(p_frame, p_user)
+            except Exception as e:
+                print(f"SCSDK 用户帧回调异常: {e}")
+
+    def _ensure_async_callback(self) -> bool:
+        """注册内部异步回调，并保持 CFUNCTYPE 对象存活。"""
+        if self._callback_attached:
+            return True
+        if not self.is_open:
+            return False
+        try:
+            self._frame_callback_ref = FrameInfoCallBack(self._on_frame)
+            n_ret = self.sdk.SC_AttachGrabbing(self._frame_callback_ref, None)
+            self._callback_attached = n_ret == SC_OK
+            if not self._callback_attached:
+                print(f"SCSDK 注册异步帧回调失败，错误码: {n_ret}")
+            return self._callback_attached
+        except Exception as e:
+            print(f"SCSDK 注册异步帧回调异常: {e}")
+            return False
+
     def attach_frame_callback(self, callback):
         """
-        注册帧数据回调（异步采集模式）
+        注册额外的用户帧回调，内部最新帧缓存仍保持工作。
         :param callback: 函数 callback(p_frame, p_user)，p_frame 为 POINTER(SC_Frame)
         """
         if not self.is_open:
             return False
-        try:
-            # 保持回调对象存活，避免被 Python GC 后 C 侧仍调用
-            self._frame_callback_ref = FrameInfoCallBack(callback)
-            n_ret = self.sdk.SC_AttachGrabbing(self._frame_callback_ref, None)
-            return n_ret == SC_OK
-        except Exception as e:
-            print(f"注册帧回调异常: {e}")
-            return False
+        self._user_frame_callback = callback
+        return self._ensure_async_callback()
 
     # ========================== 录像/导出 ==========================
 
@@ -609,6 +670,13 @@ class SCSDKCamera(Camera):
             except Exception:
                 pass
             self.is_open = False
+            self.is_grabbing = False
+            self._callback_attached = False
+            self._user_frame_callback = None
+            with self._frame_condition:
+                self._latest_frame = None
+                self._frame_condition.notify_all()
+            self._frame_callback_ref = None
             print("SCSDK 相机已关闭")
 
     def __del__(self):
