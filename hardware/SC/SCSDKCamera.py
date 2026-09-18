@@ -188,6 +188,7 @@ class SCSDKCamera(Camera):
         self.set_bit_depth(bit_depth)
 
         self.get_bit_depth()
+        self.set_dpc()
         print(f"SCSDK 相机已初始化 (Index: {camera_index}, 位深: {self.get_bit_depth()}bit)")
 
     # ========================== 核心抽象方法实现 ==========================
@@ -428,6 +429,30 @@ class SCSDKCamera(Camera):
         except Exception as e:
             print(f"设置位深异常: {e}")
 
+    def set_dpc(self, grade: int = 0) -> bool:
+        """
+        设置坏点校正等级 (DDPCGrade)，0 为关闭
+        注意: 相机侧须有 DPC 标定文件，否则设置可能失败
+        :param grade: 校正等级，0 = 关
+        """
+        if not self.is_open:
+            return False
+        try:
+            n_ret = self.sdk.SC_SetEnumFeatureValue('DDPCGrade', int(grade))
+            if n_ret != SC_OK:
+                print(f"设置坏点校正等级失败，错误码: {n_ret}")
+                entries = self.get_enum_entries('DDPCGrade')
+                if entries:
+                    print(f"DDPCGrade 可用项: {entries}")
+                return False
+            value = c_uint64(0)
+            if self.sdk.SC_GetEnumFeatureValue('DDPCGrade', value) == SC_OK:
+                print(f"坏点校正等级已设置为: {grade} (读回: {value.value})")
+            return True
+        except Exception as e:
+            print(f"设置坏点校正等级异常: {e}")
+            return False
+
     # ========================== 通用 Feature 读写 ==========================
 
     def get_feature(self, name: str):
@@ -599,11 +624,14 @@ if __name__ == "__main__":
     cam.set_ex_time(0.02)
     print(f"曝光时间设置 0.02s，读回: {cam.get_ex_time():.6f} s")
 
-    # 2. 启动采集流
+    # 2. 设置坏点校正等级（0 = 关闭）
+    cam.set_dpc(0)
+
+    # 3. 启动采集流
     cam.start_acquisition()
     time.sleep(0.5)
 
-    # 3. 读取最新一帧并查看属性
+    # 4. 读取最新一帧并查看属性
     img = cam.read_newest_image()
     if img is not None:
         print(f"获取图像成功: 形状={img.shape}, 类型={img.dtype}, "
@@ -611,13 +639,13 @@ if __name__ == "__main__":
     else:
         print("获取图像失败")
 
-    # 4. 获取帧周期
+    # 5. 获取帧周期
     frame_period = cam.get_frame_period()
     print(f"当前帧周期: {frame_period:.4f} s "
           f"(约 {1.0 / frame_period if frame_period > 0 else 0:.1f} FPS)")
 
-    # 5. 位深
+    # 6. 位深
     print(f"当前位深: {cam.get_bit_depth()} bit")
 
-    # 6. 关闭相机
+    # 7. 关闭相机
     cam.close()
