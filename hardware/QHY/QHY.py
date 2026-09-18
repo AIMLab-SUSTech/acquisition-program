@@ -56,7 +56,9 @@ class QHYCamera:
         self.camhandle = 0
         self._is_live_mode = False
         self._current_bit_depth = 16
-        self._exposure_us = 20000.0  # 默认20ms
+        # 这里只保存曝光状态，不在构造阶段向相机写入默认曝光。
+        # 实际曝光由上层在开始采集前设置，避免先切到默认值再切到目标值造成爆闪。
+        self._exposure_us = None
         
         self.image_width = 0
         self.image_height = 0
@@ -208,12 +210,16 @@ class QHYCamera:
                                                 self.image_width, self.image_height)
         print(f"SetQHYCCDResolution ret = {ret}")
         
-        # 【关键修改】曝光时间必须在位深度之前设置
-        self._exposure_us = 100000.0  # 100ms，先设置一个适中的值
-        ret = self.qhyccddll.SetQHYCCDParam(self.camhandle, 
-                                           CONTROL_ID.CONTROL_EXPOSURE.value, 
-                                           self._exposure_us)
-        print(f"SetQHYCCDParam EXPOSURE={self._exposure_us} us, ret = {ret}")
+        # 不写入硬编码的默认曝光。连接完成后，上层会在开始采集前直接写入
+        # 用户选择的目标值；此处只读取相机当前值供状态和等待时间使用。
+        current_exposure_us = self.qhyccddll.GetQHYCCDParam(
+            self.camhandle, CONTROL_ID.CONTROL_EXPOSURE.value
+        )
+        if current_exposure_us >= 0:
+            self._exposure_us = current_exposure_us
+            print(f"Current exposure: {self._exposure_us} us")
+        else:
+            print(f"Get current exposure failed, ret = {current_exposure_us}")
         
         # Gain
         ret = self.qhyccddll.SetQHYCCDParam(self.camhandle, 
@@ -239,11 +245,13 @@ class QHYCamera:
     def set_ex_time(self, ex_time):
         """设置曝光时间 (秒)"""
         try:
-            self._exposure_us = ex_time * 1e6
+            exposure_us = ex_time * 1e6
             ret = self.qhyccddll.SetQHYCCDParam(self.camhandle, 
                                                CONTROL_ID.CONTROL_EXPOSURE.value, 
-                                               self._exposure_us)
-            print(f"Set exposure: {self._exposure_us} us, ret = {ret}")
+                                               exposure_us)
+            if ret == 0:
+                self._exposure_us = exposure_us
+            print(f"Set exposure: {exposure_us} us, ret = {ret}")
         except Exception as e:
             print(f'设置曝光时间失败: {e}')
 
@@ -296,7 +304,8 @@ class QHYCamera:
         if not self._is_live_mode:
             self.start_acquisition()
             # 【关键】等待第一帧准备好（曝光时间 + buffer时间）
-            wait_time = max(0.5, self._exposure_us / 1e6 + 0.5)
+            exposure_s = (self._exposure_us or 0.0) / 1e6
+            wait_time = max(0.5, exposure_s + 0.5)
             print(f"Waiting {wait_time:.2f}s for first frame...")
             time.sleep(wait_time)
             
@@ -317,7 +326,8 @@ class QHYCamera:
         max_retries = 10
         for attempt in range(max_retries):
             # 等待相机捕获新帧
-            time.sleep(self._exposure_us / 1e6 + 0.1)  # 等待至少一个曝光时间
+            exposure_s = (self._exposure_us or 0.0) / 1e6
+            time.sleep(exposure_s + 0.1)  # 等待至少一个曝光时间
             
             ret = self.qhyccddll.GetQHYCCDLiveFrame(self.camhandle, byref(w), byref(h), 
                                                    byref(b), byref(c), self.imgdata_buffer)
