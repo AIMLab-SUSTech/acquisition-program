@@ -230,30 +230,25 @@ class SLStreamLink:
     # 【绝对关键】获取 当前 py 文件所在的目录（永远正确）
     # ==============================================
         current_folder = os.path.dirname(os.path.abspath(__file__))
-        dll_full_path = os.path.join(current_folder, "dll", "PE", "extern", "lib", dll_name)
+        lib_dir = os.path.abspath(
+            os.path.join(current_folder, "..", "PE", "extern", "lib")
+        )
+        dll_full_path = os.path.join(lib_dir, dll_name)
 
         print("="*50)
         print("当前脚本目录：", current_folder)
         print("DLL 完整路径：", dll_full_path)
         print("DLL 是否存在：", os.path.exists(dll_full_path))
         print("="*50)
-    # ==============================================
-    # 强制切换工作目录到项目根目录
-    # ==============================================
-        lib_dir = os.path.join(current_folder, "dll", "PE", "extern", "lib")
-        os.chdir(lib_dir)
-
-    # ==============================================
-    # 把当前目录加入 DLL 搜索路径
-    # ==============================================
-        os.environ['PATH'] = current_folder + os.pathsep + os.environ['PATH']
+        # 不修改进程工作目录，只注册 SDK 依赖搜索路径。
+        os.environ['PATH'] = lib_dir + os.pathsep + os.environ.get('PATH', '')
+        self._dll_directory_handle = None
         if sys.version_info >= (3, 8):
-            os.add_dll_directory(current_folder)
+            self._dll_directory_handle = os.add_dll_directory(lib_dir)
 
     # ==============================================
     # 用 绝对路径 加载 DLL（100%找到）
     # ==============================================
-        dll_full_path = os.path.join(current_folder, "dll", "PE", "extern", "lib", dll_name)
         self.dll = ctypes.CDLL(dll_full_path)
 
         self._setup_functions()

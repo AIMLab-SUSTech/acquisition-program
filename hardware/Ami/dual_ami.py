@@ -13,7 +13,7 @@ class DualAmiController(MotionController):
     实现 motion_controller.MotionController 接口 (axis 0=X, 1=Y)
     """
 
-    def __init__(self, exe_path: str = "./dll/Ami/pvcsvr.exe", x_axis: int = 1):
+    def __init__(self, exe_path: str = "./hardware/Ami/pvcsvr.exe", x_axis: int = 1):
         super().__init__()
         self.exe_path = exe_path
         if x_axis not in (1, 2):
@@ -174,7 +174,7 @@ class DualAmiController(MotionController):
 
 
 if __name__ == "__main__":
-    ctrl = DualAmiController(exe_path="./dll/Ami/pvcsvr.exe", x_axis=1)
+    ctrl = DualAmiController(exe_path="./hardware/Ami/pvcsvr.exe", x_axis=1)
     try:
         ctrl.connect()
         ctrl.enable_channels()

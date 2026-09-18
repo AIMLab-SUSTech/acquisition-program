@@ -2,6 +2,7 @@ from abc import ABC
 import sys
 import ctypes
 from ctypes import *
+from pathlib import Path
 import numpy as np
 from camera import Camera
 
@@ -186,7 +187,8 @@ class NewVSyCamera(Camera):
     def _initialize_camera(self):
         """初始化相机连接"""
         # 加载动态库
-        self.VsyCamCtrlLib = ctypes.CDLL("./dll/vsy/VsyCameraControl.dll")
+        dll_path = Path(__file__).resolve().with_name("VsyCameraControl.dll")
+        self.VsyCamCtrlLib = ctypes.CDLL(str(dll_path))
 
         # 搜索设备
         devicelist = VSY_CC_DEVICE_INFO_LIST()
