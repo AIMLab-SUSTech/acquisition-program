@@ -19,8 +19,6 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 # 导入 UI 定义
 from UI import ModernUI
 
-
-# 驱动已按厂商放在 dll/<vendor> 下。所有路径都以 main.py 为基准，
 # 不依赖启动程序时的当前工作目录。
 PROJECT_ROOT = Path(__file__).resolve().parent
 DRIVER_ROOT = PROJECT_ROOT / "hardware"
@@ -1374,7 +1372,9 @@ class LogicWindow(ModernUI):
                 if not os.path.exists(self.save_dir):
                     os.makedirs(self.save_dir)
                 try:
-                    save_path = f"{self.save_dir}/raw_data/{final_name}_dark.tif"
+                    raw_data_dir = os.path.join(self.save_dir, "raw_data")
+                    os.makedirs(raw_data_dir, exist_ok=True)
+                    save_path = os.path.join(raw_data_dir, f"scandata_dark.tif")
                     if self.cmi_dark.dtype == np.uint16 or self.cmi_dark.dtype == np.uint8:
                         Image.fromarray(self.cmi_dark).save(save_path)
                     else:
@@ -1473,7 +1473,9 @@ class LogicWindow(ModernUI):
             if not os.path.exists(self.save_dir): 
                 os.makedirs(self.save_dir)
             
-            path_tif = os.path.join(self.save_dir, f"{base_name}.tif")
+            raw_data_dir = os.path.join(self.save_dir, "raw_data")
+            os.makedirs(raw_data_dir, exist_ok=True)
+            path_tif = os.path.join(raw_data_dir, f"{base_name}.tif")
 
             try:
                 Image.fromarray(roi_img).save(path_tif)
