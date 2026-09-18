@@ -141,14 +141,15 @@ class SCSDKCamera(Camera):
     def __init__(self, camera_index: int = 0,
                  interface_type: int = SC_EInterfaceType.eInterfaceTypeAll.value,
                  log_path: str = 'RevealerLog',
-                 buffer_count: int = 10):
+                 buffer_count: int = 10,
+                 bit_depth: int = 16):
         super().__init__()
         self.camera_index = camera_index
         self.sdk = None
         self.is_open = False
         self.is_grabbing = False
         self._frame_callback_ref = None
-        self._current_bit_depth = 16
+        self._current_bit_depth = None
 
         # 1. 初始化 SDK（同一进程内仅生效一次）
         self.sdk = SCSDK()
@@ -183,8 +184,11 @@ class SCSDKCamera(Camera):
         # 设置内部帧缓存大小
         self.sdk.SC_SetBufferCount(buffer_count)
 
+        # 相机固件默认 12bit，默认切换为 16bit 模式
+        self.set_bit_depth(bit_depth)
+
         self.get_bit_depth()
-        print(f"SCSDK 相机已初始化 (Index: {camera_index})")
+        print(f"SCSDK 相机已初始化 (Index: {camera_index}, 位深: {self.get_bit_depth()}bit)")
 
     # ========================== 核心抽象方法实现 ==========================
 

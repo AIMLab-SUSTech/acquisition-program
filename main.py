@@ -334,6 +334,7 @@ class InteractiveImageView(QGraphicsView):
         max_val = np.max(image_data)
         unique_vals = np.unique(image_data)
         unique_count = len(unique_vals)
+        
         if image_data.dtype == np.uint16:
             display_data = image_data.astype(np.uint16)
         else:
@@ -374,12 +375,12 @@ class InteractiveImageView(QGraphicsView):
 
         # --- 第二步：如果勾选了显示，则重新绘制 ---
         if show_mask:
-            cx, cy = w / 2, h / 2
+            cx, cy = w / 2 + 0.5 , h / 2 + 0.5
             r = min(w, h) / 2 - 10  # 半径设为图像的 1/4
 
             # 定义笔 (颜色, 粗细, 样式)
-            pen_v = QPen(QColor("red"), 2, Qt.PenStyle.DashLine)
-            pen_h = QPen(QColor("blue"), 2, Qt.PenStyle.DashLine)
+            pen_v = QPen(QColor("red"), 0, Qt.PenStyle.DashLine)
+            pen_h = QPen(QColor("blue"), 0, Qt.PenStyle.DashLine)
             pen_c = QPen(QColor("green"), 2, Qt.PenStyle.SolidLine)
 
             # 重新添加到场景中
