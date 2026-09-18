@@ -7,7 +7,7 @@ import numpy as np
 # 1. 路径修复 (保持不变，这部分是好的)
 # =========================================================================
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sdk_root = current_dir
+sdk_root = os.path.join(current_dir, "dll", "Galaxy")
 
 if sdk_root not in sys.path:
     sys.path.append(sdk_root)
@@ -18,32 +18,20 @@ if hasattr(os, 'add_dll_directory'):
 else:
     os.environ['PATH'] = sdk_root + os.pathsep + os.environ['PATH']
 
-gx = None
-Utility = None
-
-
-def _load_galaxy_sdk():
-    """延迟加载 Galaxy SDK，让程序在未安装该厂商 SDK 时仍可启动。"""
-    global gx, Utility
-    if gx is not None:
-        return
-    try:
-        import gxipy as gx_module
-        from gxipy.ImageProc import Utility as utility_class
-    except Exception as exc:
-        raise RuntimeError(
-            "Galaxy SDK 加载失败：请安装大恒 Galaxy SDK，"
-            "并确保 GxIAPI.dll 与 DxImageProc.dll 在 PATH 中"
-        ) from exc
-    gx = gx_module
-    Utility = utility_class
+# 导入 SDK
+try:
+    import gxipy as gx
+    from gxipy.gxidef import *
+    from gxipy.ImageProc import Utility
+except ImportError as e:
+    print(f"❌ 无法导入 gxipy: {e}")
+    raise e
 
 # =========================================================================
 # 2. 相机类 (移除了报错的 get_device_class)
 # =========================================================================
 class GalaxyCamera:
     def __init__(self):
-        _load_galaxy_sdk()
         self.dm = gx.DeviceManager()
         self.cam = None
         self.data_stream = None

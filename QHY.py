@@ -43,8 +43,8 @@ class CONTROL_ID(Enum):
 class QHYCamera:
     def __init__(self, dll_path=None):
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        dll_file_path = dll_path or os.path.join(current_dir, 'qhyccd.dll')
-        dll_file_path = os.path.abspath(dll_file_path)
+        dll_dir = os.path.join(current_dir, 'dll', 'QHY')
+        dll_file_path = os.path.join(dll_dir, 'qhyccd.dll')
             
         try:
             self.qhyccddll = cdll.LoadLibrary(dll_file_path)

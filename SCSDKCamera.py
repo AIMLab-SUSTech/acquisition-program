@@ -9,8 +9,8 @@ import numpy as np
 # 导入基类
 from camera import Camera
 
-# SCSDK Python 绑定与当前文件位于同一目录。
-_SDK_DIR = os.path.dirname(os.path.abspath(__file__))
+# 将 python 文件夹内的 SCSDK 绑定目录加入搜索路径（置于最前，优先于根目录的同名绑定）
+_SDK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'python', 'SCSDK')
 if _SDK_DIR not in sys.path:
     sys.path.insert(0, _SDK_DIR)
 

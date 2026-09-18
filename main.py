@@ -2,8 +2,6 @@ import sys
 import os
 import time
 import io
-import importlib
-from pathlib import Path
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -18,52 +16,6 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
 
 # 导入 UI 定义
 from UI import ModernUI
-
-
-# 驱动已按厂商放在 dll/<vendor> 下。所有路径都以 main.py 为基准，
-# 不依赖启动程序时的当前工作目录。
-PROJECT_ROOT = Path(__file__).resolve().parent
-DRIVER_ROOT = PROJECT_ROOT / "hardware"
-PE_LIBRARY_DIR = DRIVER_ROOT / "PE" / "extern" / "lib"
-_DLL_DIRECTORY_HANDLES = []
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-def _register_dll_directory(directory):
-    """把原生 DLL 及其依赖所在目录加入 Windows 搜索路径。"""
-    directory = Path(directory).resolve()
-    if not directory.is_dir():
-        return
-
-    directory_text = str(directory)
-    path_items = os.environ.get("PATH", "").split(os.pathsep)
-    if directory_text not in path_items:
-        os.environ["PATH"] = directory_text + os.pathsep + os.environ.get("PATH", "")
-
-    if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        try:
-            # handle 必须保持存活，否则搜索路径会被立即移除。
-            _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(directory_text))
-        except OSError:
-            pass
-
-
-def _load_driver_module(vendor, module_name, extra_dll_dirs=()):
-    """从 dll/<vendor> 加载驱动，并兼容驱动内部的同目录 import。"""
-    driver_dir = (DRIVER_ROOT / vendor).resolve()
-    module_file = driver_dir / f"{module_name}.py"
-    if not module_file.is_file():
-        raise ImportError(f"驱动文件不存在: {module_file}")
-
-    driver_path = str(driver_dir)
-    if driver_path not in sys.path:
-        sys.path.insert(0, driver_path)
-
-    _register_dll_directory(driver_dir)
-    for dll_dir in extra_dll_dirs:
-        _register_dll_directory(dll_dir)
-    return importlib.import_module(module_name)
 
 # =========================================================
 #  硬件加载线程
@@ -89,32 +41,23 @@ class DeviceLoader(QThread):
                         from camera import PCOCamera
                         device_instance = PCOCamera()   
                     case "QHY":
-                        module = _load_driver_module("QHY", "QHY")
-                        device_instance = module.QHYCamera()
+                        from QHY import QHYCamera
+                        device_instance = QHYCamera()
                         device_instance.set_bit_depth(16) 
                     case "Hik":
-                        module = _load_driver_module("Hik", "hik")
-                        device_instance = module.HikrobotCamera()
+                        from hik import HikrobotCamera
+                        device_instance = HikrobotCamera()
                     case "SSZN":
-                        module = _load_driver_module(
-                            "SSZN", "SSZNCamera", extra_dll_dirs=(PE_LIBRARY_DIR,)
-                        )
-                        device_instance = module.SSZNCamera()
+                        from SSZNCamera import SSZNCamera
+                        device_instance = SSZNCamera()
                         if not device_instance.connect():
                             raise RuntimeError("SSZN 相机连接失败")
                     case "SC":
-                        sc_sdk_home = os.getenv("Revealer_Scientific_Camera_SDK_HOME")
-                        extra_dirs = ((Path(sc_sdk_home) / "bin",) if sc_sdk_home else ())
-                        module = _load_driver_module(
-                            "SC", "SCSDKCamera", extra_dll_dirs=extra_dirs
-                        )
-                        sc_index = module.find_camera_index()
+                        from SCSDKCamera import SCSDKCamera, find_camera_index
+                        sc_index = find_camera_index()
                         if sc_index < 0:
                             raise RuntimeError("SC 相机连接失败：未发现可用相机（已跳过虚拟相机）")
-                        device_instance = module.SCSDKCamera(sc_index)
-                    case "Galaxy":
-                        module = _load_driver_module("Galaxy", "GalaxyCamera")
-                        device_instance = module.GalaxyCamera()
+                        device_instance = SCSDKCamera(sc_index)
                         
             elif self.device_type == 'stage':
                 match(self.device_name):
@@ -123,30 +66,30 @@ class DeviceLoader(QThread):
                         device_instance = xps(IP='192.168.254.254')
                         device_instance.init_groups(['Group1', 'Group2'])
                     case "newports":
-                        module = _load_driver_module("NewPort", "conexcc_controller")
+                        from conexcc_controller import ConexCCController
                         # todo port 
-                        device_instance = module.ConexCCController()
-                    case "Ami":
-                        module = _load_driver_module("Ami", "Ami")
-                        device_instance = module.PvcsvrController(
-                            exe_path=str(DRIVER_ROOT / "Ami" / "pvcsvr.exe")
-                        )
+                        device_instance = ConexCCController()
+                    case "AMI":
+                        from Ami import PvcsvrController
+                        device_instance = PvcsvrController(exe_path="./dll/Ami/pvcsvr.exe")
                         try:
-                            device_instance.connect_and_enable()
-                            device_instance.enable_channel(1, True)
-                            device_instance.enable_channel(2, True)
+                            device_instance.ctrl.connect_and_enable()
                         except Exception as e:
-                            raise RuntimeError(f"AMI 初始化失败: {e}") from e
+                            print("初始化失败:", e)
+                            exit()
+
+                        # 使能通道1和通道2
+                        ctrl.enable_channel(1, True)
+                        ctrl.enable_channel(2, True)
                     case "Ami(双控制器)":
-                        module = _load_driver_module("Ami", "dual_ami")
-                        device_instance = module.DualAmiController(
-                            exe_path=str(DRIVER_ROOT / "Ami" / "pvcsvr.exe"), x_axis=1
-                        )
+                        from dual_ami import DualAmiController
+                        device_instance = DualAmiController(exe_path="./dll/Ami/pvcsvr.exe", x_axis=1)
                         try:
                             device_instance.connect()
                             device_instance.enable_channels()
                         except Exception as e:
-                            raise RuntimeError(f"双 AMI 初始化失败: {e}") from e
+                            print("双AMI初始化失败:", e)
+                            exit()
 
             if device_instance:
                 self.finished_signal.emit(True, device_instance)

@@ -1,4 +1,5 @@
 import numpy as np
+from pylablib.devices import uc480, DCAM, PCO
 from abc import ABC, abstractmethod
 import time
 import os
@@ -31,8 +32,6 @@ class Camera(ABC):
 
 class IDS(Camera):
     def __init__(self):
-        from pylablib.devices import uc480
-
         # self.cam = uc480.UC480Camera(backend='ueye')
         super().__init__()
         print((uc480.list_cameras(backend='ueye')))
@@ -99,7 +98,6 @@ class IDS(Camera):
 
 class Ham(Camera):
     def __init__(self):
-        from pylablib.devices import DCAM
 
         super().__init__()
         print(DCAM.get_cameras_number())
@@ -157,8 +155,6 @@ class Ham(Camera):
 
 class PCOCamera(Camera):
     def __init__(self):
-        from pylablib.devices import PCO
-
         try:
             self.cam = PCO.PCOSC2Camera()  # 初始化PCO相机
             print("成功连接到PCO相机")
@@ -356,6 +352,190 @@ class Basler(Camera):
         except Exception as e:
             print(f"Basler get_bit_depth error: {e}")
             return 8
+
+class GalaxyCamera(Camera):
+    def __init__(self):
+        super().__init__()
+        self.device_name = "Galaxy"
+        self.cam = None
+        
+        # --- 1. 在这里尝试导入 (懒加载) ---
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # 拼接出 gxipy 上一级文件夹的路径: .../dll/Galaxy
+            # 注意：如果我们要 import gxipy，必须把 gxipy 的【父文件夹】加入路径
+            lib_path = os.path.join(current_dir, "dll", "Galaxy")
+            
+            # 只有当路径不在系统路径里时才添加，防止重复添加
+            if lib_path not in sys.path:
+                sys.path.append(lib_path)
+                
+            import gxipy as gx
+            from gxipy import gxidef  # 显式导入 gxidef 模块
+            from gxipy.ImageProc import Utility
+            
+            # --- 2. 关键步骤：把库绑定到 self 上 ---
+            # 这样类的其他函数才能通过 self.gx, self.Utility 访问到它们
+            self.gx = gx
+            self.gxidef = gxidef
+            self.Utility = Utility
+            self.sdk_loaded = True
+            
+        except ImportError:
+            print("警告: 未找到 gxipy 库，Galaxy相机不可用。")
+            self.sdk_loaded = False
+            return
+        # -------------------------------------
+
+        self.device_manager = self.gx.DeviceManager() # 使用 self.gx
+        
+        try:
+            dev_num, dev_info_list = self.device_manager.update_all_device_list()
+            if dev_num == 0:
+                print("未发现 Galaxy 相机")
+                return
+            
+            self.cam = self.device_manager.open_device_by_index(1)
+            self.data_stream = self.cam.data_stream[0]
+            self.feature_control = self.cam.get_remote_device_feature_control()
+            self.image_convert = self.device_manager.create_image_format_convert()
+            print(f"Galaxy 相机已初始化: {dev_info_list[0].get('model_name')}")
+            
+        except Exception as e:
+            print(f"Galaxy 初始化失败: {e}")
+
+    def set_ex_time(self, ex_time):
+        if self.cam is None: return
+        try:
+            exposure_us = ex_time * 1e6
+            float_feature = self.feature_control.get_float_feature("ExposureTime")
+            range_info = float_feature.get_range()
+            # print(f"调试信息 - 曝光参数范围: {range_info}")
+            min_exposure = range_info['min']
+            max_exposure = range_info['max']
+            float_feature.set(max(min_exposure, min(exposure_us, max_exposure)))
+        except Exception as e:
+            print(f"Galaxy 设置曝光失败: {e}")
+
+    def start_acquisition(self):
+        if self.cam is None: return
+        try:
+            if self.feature_control.is_readable("TriggerMode"):
+                self.feature_control.get_enum_feature("TriggerMode").set("Off")
+            self.cam.stream_on()
+        except Exception as e:
+            print(f"Galaxy 开始采集失败: {e}")
+
+    def stop_acquisition(self):
+        if self.cam is None: return
+        try:
+            self.cam.stream_off()
+        except Exception as e:
+            print(f"Galaxy 停止采集失败: {e}")
+
+    def read_newest_image(self):
+        if self.cam is None: return None
+        try:
+            raw_image = self.data_stream.get_image(timeout=1000)
+            if raw_image is None: return None
+
+            # --- 3. 调用时要用 self.gxidef 和 self.Utility ---
+            # 注意：这里不能直接写 GxFrameStatusList，要写 self.gxidef.GxFrameStatusList
+            if raw_image.get_status() == self.gxidef.GxFrameStatusList.SUCCESS:
+                pixel_format = raw_image.get_pixel_format()
+                
+                # 使用 self.Utility
+                if self.Utility.is_gray(pixel_format):
+                    numpy_image = raw_image.get_numpy_array()
+                    if numpy_image is None:
+                        # 使用 self.gxidef
+                        self.image_convert.set_dest_format(self.gxidef.GxPixelFormatEntry.MONO8)
+                        output_image = self.image_convert.convert(raw_image)[0]
+                        numpy_image = np.frombuffer(output_image, dtype=np.ubyte).reshape(raw_image.get_height(), raw_image.get_width())
+                else:
+                    self.image_convert.set_dest_format(self.gxidef.GxPixelFormatEntry.RGB8)
+                    output_image = self.image_convert.convert(raw_image)[0]
+                    numpy_image = np.frombuffer(output_image, dtype=np.ubyte).reshape(raw_image.get_height(), raw_image.get_width(), 3)
+                
+                return numpy_image
+            return None
+        except Exception as e:
+            print(f"Galaxy 获取图像失败: {e}")
+            return None
+
+    def get_frame_period(self):
+        if self.cam is None: return 0
+        try:
+            current_fps = self.feature_control.get_float_feature("AcquisitionFrameRate").get()
+            return 1.0 / current_fps if current_fps > 0 else 0.0
+        except:
+            return 0.0
+
+    def get_bit_depth(self):
+        if self.cam is None: return 8
+        try:
+            pixel_format_str = self.feature_control.get_enum_feature("PixelFormat").get()[1]
+            if "8" in pixel_format_str: return 8
+            elif "10" in pixel_format_str: return 10
+            elif "12" in pixel_format_str: return 12
+            elif "16" in pixel_format_str: return 16
+            return 8
+        except:
+            return 8
+    
+    def set_trigger_mode(self, mode):
+        """
+        设置触发模式
+        mode: 'continuous' (连续/内部触发) 或 'software' (软触发)
+        """
+        if self.cam is None: return
+        try:
+            # 必须先停止采集才能改 TriggerMode (部分相机要求)
+            self.cam.stream_off()
+            
+            trigger_mode_feature = self.feature_control.get_enum_feature("TriggerMode")
+            
+            if mode == 'software':
+                # 1. 开启触发模式
+                trigger_mode_feature.set("On")
+                # 2. 设置源为软触发 (Line1是硬触发, Software是软触发)
+                # 注意：USB2.0相机可能不需要设Source或者Source不同，这里按标准GEV/U3V写
+                if self.feature_control.is_implemented("TriggerSource"):
+                    self.feature_control.get_enum_feature("TriggerSource").set("Software")
+                print("Galaxy: 已切换到 [软触发] 模式")
+            else:
+                # 连续模式：关闭触发，相机自动跑
+                trigger_mode_feature.set("Off")
+                print("Galaxy: 已切换到 [连续] 模式")
+                
+            # 改完参数后重新开始流
+            self.cam.stream_on()
+            
+        except Exception as e:
+            print(f"设置触发模式失败: {e}")
+
+    def trigger(self):
+        """发送一次软触发指令"""
+        if self.cam is None: return
+        try:
+            # 发送 TriggerSoftware 命令
+            cmd = self.feature_control.get_command_feature("TriggerSoftware")
+            cmd.send_command()
+        except Exception as e:
+            print(f"软触发指令发送失败: {e}")
+
+    def close(self):
+        if self.cam is not None:
+            try:
+                self.cam.stream_off()
+                self.cam.close_device()
+            except:
+                pass
+            self.cam = None
+
+    def __del__(self):
+        self.close()
 
 if __name__ == '__main__':
     # camera = Camera()

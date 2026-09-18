@@ -6,15 +6,10 @@ from pathlib import Path
 import ctypes
 
 env_var_value = os.getenv('Revealer_Scientific_Camera_SDK_HOME')
-if env_var_value is None:
-    raise RuntimeError(
-        "missing env Revealer_Scientific_Camera_SDK_HOME"
-    )
-sdk_bin_dir = Path(env_var_value).resolve() / "bin"
-lib_file_name = str(sdk_bin_dir / "scsdk.dll")
-_dll_directory_handle = None
-if sys.platform == 'win32' and hasattr(os, 'add_dll_directory'):
-    _dll_directory_handle = os.add_dll_directory(str(sdk_bin_dir))
+if env_var_value == None:
+    print("missing env Revealer_Scientific_Camera_SDK_HOME")
+    sys.exit()
+lib_file_name = str(env_var_value) + "/bin/scsdk.dll"
 
 # current_dir = os.path.dirname(os.path.abspath(__file__))
 # dll_dir = os.path.join(current_dir, 'dll', 'SCCamera')

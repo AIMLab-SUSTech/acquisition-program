@@ -1,10 +1,30 @@
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] init log fileSize: 10485760, fileNum: 5, filePath: RevealerLog/USBGenTL.log, level: 2
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] init GenTL System C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program:
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] USBSystemGenTL construct 2_usb3014
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] updateInterfaceList 0x1c9b8026510, ZKSJ USB INTERFACE
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] TLOpenInterface start 0x0
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] TLOpenInterface finish
-[2026-09-17 17:15:37.355] [warning] [thread id: 36532] getPortURL not implemented yet
-[2026-09-17 17:15:37.355] [warning] [thread id: 36532] getPortURL not implemented yet
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] GenTL::USBInterfaceGenTL::updateDeviceList:30
-[2026-09-17 17:15:37.355] [info] [thread id: 36532] GenTL::USBInterfaceGenTL::updateDeviceList:37
+[2026-09-17 16:26:26.371] [info] [thread id: 16996] init log fileSize: 10485760, fileNum: 5, filePath: RevealerLog/USBGenTL.log, level: 2
+[2026-09-17 16:26:26.371] [info] [thread id: 16996] init GenTL System C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program:
+[2026-09-17 16:26:26.372] [info] [thread id: 16996] USBSystemGenTL construct 2_usb3014
+[2026-09-17 16:26:26.372] [info] [thread id: 16996] updateInterfaceList 0x25b48d42160, ZKSJ USB INTERFACE
+[2026-09-17 16:26:26.372] [info] [thread id: 16996] TLOpenInterface start 0x0
+[2026-09-17 16:26:26.372] [info] [thread id: 16996] TLOpenInterface finish
+[2026-09-17 16:26:26.372] [warning] [thread id: 16996] getPortURL not implemented yet
+[2026-09-17 16:26:26.372] [warning] [thread id: 16996] getPortURL not implemented yet
+[2026-09-17 16:26:26.372] [info] [thread id: 16996] GenTL::USBInterfaceGenTL::updateDeviceList:30
+[2026-09-17 16:26:26.373] [info] [thread id: 16996] GenTL::USBInterfaceGenTL::updateDeviceList:37
+[2026-09-17 16:26:40.376] [info] [thread id: 37100] init log fileSize: 10485760, fileNum: 5, filePath: RevealerLog/USBGenTL.log, level: 2
+[2026-09-17 16:26:40.376] [info] [thread id: 37100] init GenTL System C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program:
+[2026-09-17 16:26:40.376] [info] [thread id: 37100] USBSystemGenTL construct 2_usb3014
+[2026-09-17 16:26:40.376] [info] [thread id: 37100] updateInterfaceList 0x207cff5ec30, ZKSJ USB INTERFACE
+[2026-09-17 16:26:40.376] [info] [thread id: 37100] TLOpenInterface start 0x0
+[2026-09-17 16:26:40.376] [info] [thread id: 37100] TLOpenInterface finish
+[2026-09-17 16:26:40.377] [warning] [thread id: 37100] getPortURL not implemented yet
+[2026-09-17 16:26:40.377] [warning] [thread id: 37100] getPortURL not implemented yet
+[2026-09-17 16:26:40.377] [info] [thread id: 37100] GenTL::USBInterfaceGenTL::updateDeviceList:30
+[2026-09-17 16:26:40.377] [info] [thread id: 37100] GenTL::USBInterfaceGenTL::updateDeviceList:37
+[2026-09-17 16:27:30.696] [info] [thread id: 37624] init log fileSize: 10485760, fileNum: 5, filePath: RevealerLog/USBGenTL.log, level: 2
+[2026-09-17 16:27:30.696] [info] [thread id: 37624] init GenTL System C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program:
+[2026-09-17 16:27:30.696] [info] [thread id: 37624] USBSystemGenTL construct 2_usb3014
+[2026-09-17 16:27:30.696] [info] [thread id: 37624] updateInterfaceList 0x1d240810960, ZKSJ USB INTERFACE
+[2026-09-17 16:27:30.696] [info] [thread id: 37624] TLOpenInterface start 0x0
+[2026-09-17 16:27:30.696] [info] [thread id: 37624] TLOpenInterface finish
+[2026-09-17 16:27:30.697] [warning] [thread id: 37624] getPortURL not implemented yet
+[2026-09-17 16:27:30.697] [warning] [thread id: 37624] getPortURL not implemented yet
+[2026-09-17 16:27:30.697] [info] [thread id: 37624] GenTL::USBInterfaceGenTL::updateDeviceList:30
+[2026-09-17 16:27:30.697] [info] [thread id: 37624] GenTL::USBInterfaceGenTL::updateDeviceList:37
