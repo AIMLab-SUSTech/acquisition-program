@@ -1080,41 +1080,55 @@ class LogicWindow(ModernUI):
             self.log_error("扫描器未初始化")
             return
 
+        # 每次扫描前都让用户决定是否重新采集暗场。
+        # 尚无暗场时必须采集；已有暗场时选“否”即复用当前暗场。
+        dark_msg = QMessageBox(self)
+        dark_msg.setWindowTitle("暗场检查")
         if self.dark_frame is None:
-            confirm = QMessageBox.question(
-                self, 
-                "暗场检查",                 # <--- 这里是标题 (Title)
-                "是否采集当前环境的暗场？",   # <--- 这里是内容 (Text)
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
-            if confirm == QMessageBox.StandardButton.Yes:
-                img_dark = self.camera.read_newest_image()
-                if img_dark is None:
-                    self.log_error("暗场采集失败：无法获取图像")
-                    return
-                img_dark = self.crop_image(img_dark)
-                if img_dark is None:
-                    self.log_error("暗场采集失败：图像裁剪失败") 
-                    return
-                self.dark_frame = img_dark.astype(np.uint16)
-                self.log_success("暗场采集完成")
-                raw_data_dir = os.path.join(self.save_dir, "raw_data")
-                if not os.path.exists(raw_data_dir):
-                    os.makedirs(raw_data_dir)
-                path_dark = os.path.join(raw_data_dir, "dark.tif")  
-                try:
-                    if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
-                        Image.fromarray(img_dark).save(path_dark)
-                    else:
-                        Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
-                except Exception as e:
-                    self.log_error(f"暗场保存失败: {e}")
-            else:
-                self.log_info("采集已取消")
-                self.btn_cap.setEnabled(True)  # 释放按钮
+            dark_msg.setText("尚未采集暗场，是否现在采集？")
+        else:
+            dark_msg.setText("是否重新采集当前环境的暗场？\n选择“否”将使用已有暗场。")
+        dark_msg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        btn_no = dark_msg.button(QMessageBox.StandardButton.No)
+        if self.dark_frame is None:
+            btn_no.setEnabled(False)
+            btn_no.setText("No (已禁用)")
+
+        dark_result = dark_msg.exec()
+        if dark_result == QMessageBox.StandardButton.Yes:
+            img_dark = self.camera.read_newest_image()
+            if img_dark is None:
+                self.log_error("暗场采集失败：无法获取图像")
+                self.btn_cap.setEnabled(True)
                 self.btn_cap.setText("采集")
                 return
+            img_dark = self.crop_image(img_dark)
+            if img_dark is None:
+                self.log_error("暗场采集失败：图像裁剪失败")
+                self.btn_cap.setEnabled(True)
+                self.btn_cap.setText("采集")
+                return
+            self.dark_frame = img_dark.astype(np.uint16)
+            self.log_success("暗场采集完成")
+            raw_data_dir = os.path.join(self.save_dir, "raw_data")
+            if not os.path.exists(raw_data_dir):
+                os.makedirs(raw_data_dir)
+            path_dark = os.path.join(raw_data_dir, "dark.tif")
+            try:
+                if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
+                    Image.fromarray(img_dark).save(path_dark)
+                else:
+                    Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
+            except Exception as e:
+                self.log_error(f"暗场保存失败: {e}")
+        elif dark_result != QMessageBox.StandardButton.No or self.dark_frame is None:
+            self.log_info("采集已取消")
+            self.btn_cap.setEnabled(True)  # 释放按钮
+            self.btn_cap.setText("采集")
+            return
         
         if self.dark_frame is not None:
             confirm = QMessageBox.question(
