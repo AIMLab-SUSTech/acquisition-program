@@ -75,7 +75,7 @@ class DeviceLoader(QThread):
         self.device_name = device_name
 
     def run(self):
-        try:
+        try:  
             device_instance = None
             if self.device_type == 'camera':
                 match(self.device_name):
@@ -976,8 +976,15 @@ class LogicWindow(ModernUI):
             
             qimg = QImage.fromData(buf.getvalue())
             pixmap = QPixmap.fromImage(qimg)
+            preview_size = self.lbl_scan_preview.contentsRect().size()
+            if preview_size.width() > 0 and preview_size.height() > 0:
+                pixmap = pixmap.scaled(
+                    preview_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            self.lbl_scan_preview.setScaledContents(False)
             self.lbl_scan_preview.setPixmap(pixmap)
-            self.lbl_scan_preview.setScaledContents(True)
 
         except Exception as e:
             self.log_error(f"生成路径失败: {e}")

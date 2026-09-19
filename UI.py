@@ -16,6 +16,26 @@ STYLE_TEXT_GRAY = "color: #666; font-size: 20px;"
 STYLE_VAL_RED = "color: red; font-weight: bold; background: #f0f0f0;"
 STYLE_VAL_BLUE = "color: blue; font-weight: bold; background: #f0f0f0;"
 
+
+class ScanPreviewLabel(QLabel):
+    """保持 4:3 的扫描路径预览区，尺寸不受 pixmap 原始分辨率影响。"""
+
+    ASPECT_RATIO = 4 / 3
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setMinimumHeight(160)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return max(self.minimumHeight(), round(width / self.ASPECT_RATIO))
+
+
 # ==========================================
 # 1. 增强版位移台控制
 # ==========================================
@@ -250,8 +270,10 @@ class ModernUI(QMainWindow):
         form.addRow("预计点数:", self.scan_points)
         
         self.btn_show_path = QPushButton("显示路径"); form.addRow(self.btn_show_path)
-        self.lbl_scan_preview = QLabel("Preview Area")
-        self.lbl_scan_preview.setAlignment(Qt.AlignmentFlag.AlignCenter); self.lbl_scan_preview.setMinimumHeight(160)
+        self.lbl_scan_preview = ScanPreviewLabel("Preview Area")
+        self.lbl_scan_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 宽度随功能区变化，高度由 ScanPreviewLabel 按 4:3 自动计算。
+        self.lbl_scan_preview.setMinimumWidth(0)
         self.lbl_scan_preview.setStyleSheet("border: 1px dashed #aaa; background: #f9f9f9;")
         form.addRow(self.lbl_scan_preview); g_scan.setLayout(form); layout.addWidget(g_scan)
         layout.addStretch()
