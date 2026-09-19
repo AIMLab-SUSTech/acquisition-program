@@ -149,6 +149,9 @@ class SCSDKCamera(Camera):
         self.sdk = None
         self.is_open = False
         self.is_grabbing = False
+        self.supports_software_trigger = True
+        self.trigger_mode_settle_s = 1.0
+        self.read_waits_for_new_frame = True
         self._frame_callback_ref = None
         self._user_frame_callback = None
         self._callback_attached = False
@@ -310,6 +313,16 @@ class SCSDKCamera(Camera):
         """兼容 Camera 基类的统一接口，SC 相机实际通过 getframe 取图。"""
         return self.getframe(timeout_ms)
 
+    def flush_image_queue(self):
+        """清空回调缓存，使下次 getframe 等待软触发后的新帧。"""
+        if not self.is_open:
+            return False
+        with self._frame_condition:
+            self._latest_frame = None
+            self._latest_frame_id = None
+            self._callback_error = None
+        return True
+
     def get_frame_period(self) -> float:
         """
         获取当前帧周期
@@ -359,8 +372,8 @@ class SCSDKCamera(Camera):
         """
         if not self.is_open:
             return
+        was_grabbing = self.is_grabbing
         try:
-            was_grabbing = self.is_grabbing
             if was_grabbing:
                 self.stop_acquisition()
 
@@ -380,10 +393,11 @@ class SCSDKCamera(Camera):
                     return
                 print("SCSDK: 已切换到 [连续] 模式")
 
-            if was_grabbing:
-                self.start_acquisition()
         except Exception as e:
             print(f"设置触发模式异常: {e}")
+        finally:
+            if was_grabbing and not self.is_grabbing:
+                self.start_acquisition()
 
     def trigger(self):
         """

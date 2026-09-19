@@ -55,6 +55,8 @@ class QHYCamera:
         
         self.camhandle = 0
         self._is_live_mode = False
+        # read_newest_image 内部已清缓存并等待新帧，上层无需重复 sleep。
+        self.read_waits_for_new_frame = True
         self._current_bit_depth = 16
         # 这里只保存曝光状态，不在构造阶段向相机写入默认曝光。
         # 实际曝光由上层在开始采集前设置，避免先切到默认值再切到目标值造成爆闪。

@@ -203,6 +203,20 @@ class HikrobotCamera(Camera):
         except Exception as e:
             print(f"停止采集异常: {e}")
 
+    def flush_image_queue(self):
+        """清空 MVS 内部图像缓存，避免读到位移前的帧。"""
+        if not self.is_streaming or self.cam is None:
+            return False
+        try:
+            ret = self.cam.MV_CC_ClearImageBuffer()
+            if ret != self.MV_OK:
+                print(f"清空图像缓存失败，错误码: {ret}")
+                return False
+            return True
+        except Exception as e:
+            print(f"清空图像缓存异常: {e}")
+            return False
+
     def read_newest_image(self):
         # if not self.is_streaming or self.cam is None:
         #     print("相机未处于采集状态")

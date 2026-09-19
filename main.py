@@ -215,13 +215,58 @@ class ScanWorker(QThread):
         
         return full_image[y1:y2, x1:x2]
 
+    def wait_for_stage_target(self, target_x, target_y, dx, dy, timeout=10.0):
+        """轮询位置反馈，连续两次到位后立即返回实际坐标。"""
+        if not hasattr(self.motion, 'get_position'):
+            raise RuntimeError("位移台不支持位置反馈，无法确认移动完成")
+
+        tolerance_x = min(0.005, max(0.0005, abs(dx) * 0.02))
+        tolerance_y = min(0.005, max(0.0005, abs(dy) * 0.02))
+        deadline = time.monotonic() + timeout
+        consecutive_reached = 0
+        cur_x = cur_y = 0.0
+
+        while self.is_running:
+            cur_x = float(self.motion.get_position(0))
+            cur_y = float(self.motion.get_position(1))
+            reached = (
+                abs(cur_x - target_x) <= tolerance_x
+                and abs(cur_y - target_y) <= tolerance_y
+            )
+
+            if reached:
+                consecutive_reached += 1
+                if consecutive_reached >= 2:
+                    return cur_x, cur_y
+            else:
+                consecutive_reached = 0
+
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "位移台到位超时: "
+                    f"目标=({target_x:.6f}, {target_y:.6f}) mm, "
+                    f"当前=({cur_x:.6f}, {cur_y:.6f}) mm"
+                )
+
+            time.sleep(0.01)
+
+        raise RuntimeError("扫描已停止")
+
     def run(self):
         total = len(self.scanner.x)
-        if hasattr(self.camera, 'set_trigger_mode'):
-            # 停止实时流，准备精确采集
-            self.camera.set_trigger_mode('software')
-            # 给一点时间让相机反应
-            time.sleep(0.2)  # 增加延迟时间
+        use_software_trigger = getattr(
+            self.camera, 'supports_software_trigger', False
+        )
+        if use_software_trigger:
+            try:
+                self.camera.set_trigger_mode('software')
+                settle_time = getattr(self.camera, 'trigger_mode_settle_s', 0.0)
+                if settle_time > 0:
+                    time.sleep(settle_time)
+            except Exception as e:
+                self.log_signal.emit(f"设置软触发模式失败: {e}", "error")
+                self.finished_signal.emit()
+                return
 
         for i in range(total):
             if not self.is_running: break
@@ -232,11 +277,20 @@ class ScanWorker(QThread):
             
             # --- 移动逻辑 ---
             try:
-                # 简单粗暴：直接调用 motion 的相对移动
-                self.motion.move_by(dx, axis=0) # 假设 0 是 X
-                self.motion.move_by(dy, axis=1) # 假设 1 是 Y
-                # 给位移台足够的时间稳定
-                time.sleep(0.2)  # 增加延迟时间
+                start_x = float(self.motion.get_position(0))
+                start_y = float(self.motion.get_position(1))
+                target_x = start_x + dx
+                target_y = start_y + dy
+
+                if dx != 0:
+                    self.motion.move_by(dx, axis=0)
+                if dy != 0:
+                    self.motion.move_by(dy, axis=1)
+
+                # 不再固定等待 0.2 s；到位后立即进入采集。
+                cur_x, cur_y = self.wait_for_stage_target(
+                    target_x, target_y, dx, dy
+                )
             except Exception as e:
                 self.log_signal.emit(f"移动错误: {e}", "error")
                 break
@@ -260,8 +314,20 @@ class ScanWorker(QThread):
             max_retries = 3
             raw_img = None
             for attempt in range(max_retries):
-                # 给相机足够的时间采集
-                time.sleep(self.exposure_s * 1.5)  # 增加采集时间
+                if use_software_trigger:
+                    try:
+                        self.camera.trigger()
+                    except Exception as e:
+                        self.log_signal.emit(
+                            f"第 {i} 点软触发失败: {e}",
+                            "warning",
+                        )
+                        continue
+
+                # Galaxy 的 get_image 会阻塞等待新帧，无需再额外 sleep。
+                # 其他非阻塞驱动仍按曝光时间等待。
+                if not getattr(self.camera, 'read_waits_for_new_frame', False):
+                    time.sleep(max(0.001, self.exposure_s * 1.1))
                 raw_img = self.camera.read_newest_image()
                 if raw_img is not None:
                     # 检查图像是否为全黑
@@ -275,17 +341,6 @@ class ScanWorker(QThread):
             if raw_img is not None:
                 raw_img = self.worker_crop(raw_img)
             
-            # 获取当前绝对坐标
-            cur_x = 0.0
-            cur_y = 0.0
-            try:
-                if hasattr(self.motion, 'get_position'):
-                    cur_x = self.motion.get_position(0)
-                    cur_y = self.motion.get_position(1)
-            except:
-                self.log_signal.emit(f"读取坐标错误: {e}", "error")
-                return
-
             if raw_img is not None:
                 # 处理暗场 
                 if self.dark_frame is not None:
@@ -307,8 +362,9 @@ class ScanWorker(QThread):
                     else:
                         final_data = raw_img
                 
-                # 发送信号给主界面保存和显示
-                self.update_signal.emit(final_data, cur_x, cur_y, i)
+                # 扫描线程是采集期间唯一的相机读取者。
+                # 界面预览仅接收独立副本，不再从相机取帧。
+                self.update_signal.emit(final_data.copy(), cur_x, cur_y, i)
             else:
                 self.log_signal.emit(f"第 {i} 点采集失败: 空图像", "warning")
 
@@ -453,6 +509,8 @@ class LogicWindow(ModernUI):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame) 
         self.is_live = False
+        self.scan_in_progress = False
+        self._resume_live_after_scan = False
         self.last_mouse_x = 0
         self.last_mouse_y = 0
         self.image_view.mouse_hover_signal.connect(self.on_mouse_moved)
@@ -713,6 +771,10 @@ class LogicWindow(ModernUI):
         return full_image[y1:y2, x1:x2]
 
     def update_frame(self):
+        # 扫描期间由 ScanWorker 独占相机，即使有未处理的定时器事件也不取帧。
+        if self.scan_in_progress:
+            return
+
         if self.camera:
             try:
                 if type(self.camera).__name__ == "NewVSYCamera":
@@ -773,6 +835,10 @@ class LogicWindow(ModernUI):
                 self.log_error(f"更新图像时出错: {e}")
 
     def toggle_live(self):
+        if self.scan_in_progress:
+            self.log_warning("扫描采集期间不能单独启动实时预览")
+            return
+
         if not self.camera:
             self.log_warning("请先连接并初始化相机！")
             return
@@ -798,6 +864,51 @@ class LogicWindow(ModernUI):
             self.btn_live.setText("⬛ 停止")
             self.btn_live.setStyleSheet("background:#7f8c8d;color:white;font-weight:bold;height: 45px;")
             self.log_success("实时显示已启动")
+
+    def _pause_live_preview_for_scan(self):
+        """让扫描线程独占相机，记住扫描后是否需要恢复实时预览。"""
+        self._resume_live_after_scan = self.is_live
+        self.timer.stop()
+        self.is_live = False
+        self.scan_in_progress = True
+        self.btn_live.setEnabled(False)
+        self.btn_live.setText("扫描预览中...")
+        self.btn_live.setStyleSheet(
+            "background:#7f8c8d;color:white;font-weight:bold;height: 45px;"
+        )
+
+    def _restore_live_preview_after_scan(self):
+        """扫描结束后恢复按钮，并按扫描前的状态恢复实时预览。"""
+        should_resume = self._resume_live_after_scan
+        self._resume_live_after_scan = False
+        self.scan_in_progress = False
+        self.btn_live.setEnabled(True)
+
+        if (
+            self.camera
+            and getattr(self.camera, 'supports_software_trigger', False)
+        ):
+            try:
+                self.camera.set_trigger_mode('continuous')
+            except Exception as e:
+                self.log_warning(f"恢复相机连续采集模式失败: {e}")
+
+        if should_resume and self.camera:
+            exposure_ms = self.exposure_spin.value()
+            refresh_interval = max(10, int(exposure_ms))
+            self.timer.start(refresh_interval)
+            self.is_live = True
+            self.btn_live.setText("⬛ 停止")
+            self.btn_live.setStyleSheet(
+                "background:#7f8c8d;color:white;font-weight:bold;height: 45px;"
+            )
+            self.log_info("扫描结束，已恢复实时预览")
+        else:
+            self.is_live = False
+            self.btn_live.setText("👁 启动")
+            self.btn_live.setStyleSheet(
+                "background:#27ae60;color:white;font-weight:bold;height: 45px;"
+            )
 
     def calculate_center(self): #todo
         if not self.camera:
@@ -1199,7 +1310,14 @@ class LogicWindow(ModernUI):
         self.worker.log_signal.connect(self._worker_log)
         self.worker.finished_signal.connect(self._scan_finished)
 
-        self.worker.start()
+        self._pause_live_preview_for_scan()
+        try:
+            self.worker.start()
+        except Exception as e:
+            self._restore_live_preview_after_scan()
+            self.btn_cap.setEnabled(True)
+            self.btn_cap.setText("🔴 采集")
+            self.log_error(f"启动扫描线程失败: {e}")
 
     def _worker_log(self, msg, level):
         """
@@ -1254,6 +1372,7 @@ class LogicWindow(ModernUI):
         self.btn_cap.setEnabled(True)  # 锁定按钮
         self.btn_cap.setText("🔴 采集")
         self.btn_cap.setStyleSheet("background:#e74c3c;color:white;font-weight:bold;height: 45px;")
+        self._restore_live_preview_after_scan()
 
     def _write_scan_to_h5(self, img_data, cur_x, cur_y, h5_path=None):
         """

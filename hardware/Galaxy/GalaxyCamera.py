@@ -48,6 +48,7 @@ class GalaxyCamera:
         self.cam = None
         self.data_stream = None
         self.is_open = False
+        self.read_waits_for_new_frame = True
         
         # 1. 枚举设备
         dev_num, dev_info_list = self.dm.update_all_device_list()
