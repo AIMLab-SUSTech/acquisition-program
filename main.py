@@ -241,6 +241,21 @@ class ScanWorker(QThread):
                 self.log_signal.emit(f"移动错误: {e}", "error")
                 break
 
+            # Galaxy 等连续采集相机可能在位移期间积压旧帧。
+            # 位移稳定后清空队列，下一次读取将阻塞等待新帧。
+            if hasattr(self.camera, 'flush_image_queue'):
+                try:
+                    if not self.camera.flush_image_queue():
+                        self.log_signal.emit(
+                            f"第 {i} 点清空相机缓冲队列失败",
+                            "warning",
+                        )
+                except Exception as e:
+                    self.log_signal.emit(
+                        f"第 {i} 点清空相机缓冲队列异常: {e}",
+                        "warning",
+                    )
+
             # 2. 读取图像 - 多次尝试确保获取到有效图像
             max_retries = 3
             raw_img = None

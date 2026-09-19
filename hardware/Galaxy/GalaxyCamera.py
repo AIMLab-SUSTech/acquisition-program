@@ -84,10 +84,29 @@ class GalaxyCamera:
             try:
                 # 设置为连续采集模式
                 self.cam.TriggerMode.set(gx.GxSwitchEntry.OFF)
+                # 缓冲区中只保留最新帧，避免扫描时读到位移前的积压图像。
+                try:
+                    self.data_stream.StreamBufferHandlingMode.set(
+                        gx.GxDSStreamBufferHandlingModeEntry.NEWEST_ONLY
+                    )
+                except Exception as e:
+                    print(f"Galaxy 设置 NEWEST_ONLY 失败: {e}")
                 self.cam.stream_on()
                 print("相机开始采集流...")
             except Exception as e:
                 print(f"开始采集失败: {e}")
+
+    def flush_image_queue(self):
+        """清空当前缓冲队列，使下次读取等待清空后产生的新帧。"""
+        if not self.data_stream or not self.is_open:
+            return False
+
+        try:
+            self.data_stream.flush_queue()
+            return True
+        except Exception as e:
+            print(f"Galaxy 清空图像缓冲队列失败: {e}")
+            return False
 
     def stop_acquisition(self):
         """停止采集"""
@@ -181,7 +200,7 @@ class GalaxyCamera:
 
             # 如果是二维数组(黑白)，直接返回
             if numpy_image.ndim == 2:
-                return numpy_image
+                return numpy_image.copy()
             
             # 如果是三维数组(彩色)或其他格式，转为 Mono8
             # event1.py 需要二维数组才能正常显示
