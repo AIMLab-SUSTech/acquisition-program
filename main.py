@@ -3,10 +3,10 @@ import os
 import time
 import io
 import importlib
+import threading
 from pathlib import Path
 import numpy as np
 from PIL import Image
-import matplotlib.pyplot as plt
 import traceback
 import h5py
 import shutil
@@ -14,7 +14,7 @@ import shutil
 # PyQt6 导入
 from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
 from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread, QElapsedTimer
 
 # 导入 UI 定义
 from UI import ModernUI
@@ -154,6 +154,63 @@ class DeviceLoader(QThread):
         except Exception as e:
             self.finished_signal.emit(False, str(e))
 
+
+class LivePreviewWorker(QThread):
+    """在后台读取相机，只保留最新帧，避免预览任务阻塞 GUI 事件循环。"""
+
+    error_signal = pyqtSignal(str)
+    exposure_applied = pyqtSignal(float)
+
+    def __init__(self, camera, camera_lock, fps=30):
+        super().__init__()
+        self.camera = camera
+        self.camera_lock = camera_lock
+        self.frame_interval = 1.0 / max(1, fps)
+        self._running = True
+        self._latest_frame = None
+        self._pending_exposure = None
+        self._state_lock = threading.Lock()
+
+    def run(self):
+        while self._running:
+            started = time.perf_counter()
+            try:
+                with self._state_lock:
+                    exposure = self._pending_exposure
+                    self._pending_exposure = None
+
+                with self.camera_lock:
+                    if exposure is not None:
+                        self.camera.set_ex_time(exposure)
+                        self.exposure_applied.emit(exposure * 1000.0)
+                    if type(self.camera).__name__ == "NewVSYCamera":
+                        self.camera.start_acquisition()
+                    frame = self.camera.read_newest_image()
+
+                if frame is not None:
+                    with self._state_lock:
+                        self._latest_frame = frame
+            except Exception as exc:
+                self.error_signal.emit(str(exc))
+                break
+
+            remaining = self.frame_interval - (time.perf_counter() - started)
+            if remaining > 0:
+                self.msleep(max(1, int(remaining * 1000)))
+
+    def take_latest_frame(self):
+        with self._state_lock:
+            frame = self._latest_frame
+            self._latest_frame = None
+        return frame
+
+    def request_exposure(self, exposure_seconds):
+        with self._state_lock:
+            self._pending_exposure = float(exposure_seconds)
+
+    def stop(self):
+        self._running = False
+
 # =========================================================
 #  新增：后台扫描线程 (解决 UI 卡顿和采集同步问题)
 # =========================================================
@@ -162,9 +219,18 @@ class ScanWorker(QThread):
     # update_signal 传递: (图像数据, 当前X, 当前Y, 当前索引)
     update_signal = pyqtSignal(object, float, float, int) 
     log_signal = pyqtSignal(str, str) # (消息内容, 颜色类型)
-    finished_signal = pyqtSignal()
+    finished_signal = pyqtSignal(bool, str)
 
-    def __init__(self, camera, motion, scanner, exposure_time_ms, crop_params, dark_frame=None):
+    def __init__(
+        self,
+        camera,
+        motion,
+        scanner,
+        exposure_time_ms,
+        crop_params,
+        dark_frame=None,
+        axis_mapping=(False, False, False),
+    ):
         super().__init__()
         self.camera = camera
         self.motion = motion
@@ -172,6 +238,7 @@ class ScanWorker(QThread):
         self.exposure_s = exposure_time_ms / 1000.0
         self.dark_frame = dark_frame
         self.bit_depth = 16
+        self.is_swap, self.inv_x, self.inv_y = axis_mapping
         
         # 解包裁剪参数 (width, height, off_x, off_y)
         self.target_w, self.target_h, self.off_x, self.off_y = crop_params
@@ -215,7 +282,33 @@ class ScanWorker(QThread):
         
         return full_image[y1:y2, x1:x2]
 
-    def wait_for_stage_target(self, target_x, target_y, dx, dy, timeout=10.0):
+    def _logical_to_physical_deltas(self, dx, dy):
+        """把界面中的逻辑 XY 位移转换为物理轴 0/1 的位移。"""
+        physical = [0.0, 0.0]
+        x_axis = 1 if self.is_swap else 0
+        y_axis = 0 if self.is_swap else 1
+        physical[x_axis] = -dx if self.inv_x else dx
+        physical[y_axis] = -dy if self.inv_y else dy
+        return physical[0], physical[1]
+
+    def _physical_to_logical_position(self, physical_x, physical_y):
+        """把物理轴位置转换为与扫描路径一致的逻辑 XY 坐标。"""
+        physical = (physical_x, physical_y)
+        x_axis = 1 if self.is_swap else 0
+        y_axis = 0 if self.is_swap else 1
+        logical_x = physical[x_axis] * (-1 if self.inv_x else 1)
+        logical_y = physical[y_axis] * (-1 if self.inv_y else 1)
+        return logical_x, logical_y
+
+    def wait_for_stage_target(
+        self,
+        target_x,
+        target_y,
+        dx,
+        dy,
+        timeout=10.0,
+        allow_stopped=False,
+    ):
         """轮询位置反馈，连续两次到位后立即返回实际坐标。"""
         if not hasattr(self.motion, 'get_position'):
             raise RuntimeError("位移台不支持位置反馈，无法确认移动完成")
@@ -226,7 +319,7 @@ class ScanWorker(QThread):
         consecutive_reached = 0
         cur_x = cur_y = 0.0
 
-        while self.is_running:
+        while self.is_running or allow_stopped:
             cur_x = float(self.motion.get_position(0))
             cur_y = float(self.motion.get_position(1))
             reached = (
@@ -252,31 +345,63 @@ class ScanWorker(QThread):
 
         raise RuntimeError("扫描已停止")
 
+    def _return_stage_to_start(self, origin_x, origin_y):
+        """根据实时位置回到扫描起点，而不是依赖计划路径的最终位移。"""
+        cur_x = float(self.motion.get_position(0))
+        cur_y = float(self.motion.get_position(1))
+        dx = origin_x - cur_x
+        dy = origin_y - cur_y
+
+        for axis, target, delta in (
+            (0, origin_x, dx),
+            (1, origin_y, dy),
+        ):
+            if abs(delta) <= 0.0005:
+                continue
+            if hasattr(self.motion, 'move_to'):
+                self.motion.move_to(target, axis=axis)
+            else:
+                self.motion.move_by(delta, axis=axis)
+
+        return self.wait_for_stage_target(
+            origin_x,
+            origin_y,
+            dx,
+            dy,
+            allow_stopped=True,
+        )
+
     def run(self):
         total = len(self.scanner.x)
         use_software_trigger = getattr(
             self.camera, 'supports_software_trigger', False
         )
-        if use_software_trigger:
-            try:
+        origin = None
+        success = False
+        result_message = "扫描未完成"
+
+        try:
+            origin = (
+                float(self.motion.get_position(0)),
+                float(self.motion.get_position(1)),
+            )
+
+            if use_software_trigger:
                 self.camera.set_trigger_mode('software')
                 settle_time = getattr(self.camera, 'trigger_mode_settle_s', 0.0)
                 if settle_time > 0:
                     time.sleep(settle_time)
-            except Exception as e:
-                self.log_signal.emit(f"设置软触发模式失败: {e}", "error")
-                self.finished_signal.emit()
-                return
 
-        for i in range(total):
-            if not self.is_running: break
+            for i in range(total):
+                if not self.is_running:
+                    raise RuntimeError("扫描已停止")
 
-            # 1. 移动位移台
-            dx = self.scanner.x[i]
-            dy = self.scanner.y[i]
-            
-            # --- 移动逻辑 ---
-            try:
+                # 1. 按当前 XY 交换和方向配置移动位移台。
+                logical_dx = self.scanner.x[i]
+                logical_dy = self.scanner.y[i]
+                dx, dy = self._logical_to_physical_deltas(
+                    logical_dx, logical_dy
+                )
                 start_x = float(self.motion.get_position(0))
                 start_y = float(self.motion.get_position(1))
                 target_x = start_x + dx
@@ -291,59 +416,47 @@ class ScanWorker(QThread):
                 cur_x, cur_y = self.wait_for_stage_target(
                     target_x, target_y, dx, dy
                 )
-            except Exception as e:
-                self.log_signal.emit(f"移动错误: {e}", "error")
-                break
 
-            # Galaxy 等连续采集相机可能在位移期间积压旧帧。
-            # 位移稳定后清空队列，下一次读取将阻塞等待新帧。
-            if hasattr(self.camera, 'flush_image_queue'):
-                try:
-                    if not self.camera.flush_image_queue():
-                        self.log_signal.emit(
-                            f"第 {i} 点清空相机缓冲队列失败",
-                            "warning",
-                        )
-                except Exception as e:
-                    self.log_signal.emit(
-                        f"第 {i} 点清空相机缓冲队列异常: {e}",
-                        "warning",
-                    )
-
-            # 2. 读取图像 - 多次尝试确保获取到有效图像
-            max_retries = 3
-            raw_img = None
-            for attempt in range(max_retries):
-                if use_software_trigger:
+                # Galaxy 等连续采集相机可能在位移期间积压旧帧。
+                # 位移稳定后清空队列，下一次读取将阻塞等待新帧。
+                if hasattr(self.camera, 'flush_image_queue'):
                     try:
-                        self.camera.trigger()
+                        if not self.camera.flush_image_queue():
+                            self.log_signal.emit(
+                                f"第 {i} 点清空相机缓冲队列失败",
+                                "warning",
+                            )
                     except Exception as e:
                         self.log_signal.emit(
-                            f"第 {i} 点软触发失败: {e}",
+                            f"第 {i} 点清空相机缓冲队列异常: {e}",
                             "warning",
                         )
-                        continue
+
+                # 2. 每个点只采集一次；任一点读取失败即终止整次扫描。
+                if use_software_trigger:
+                    self.camera.trigger()
 
                 # Galaxy 的 get_image 会阻塞等待新帧，无需再额外 sleep。
                 # 其他非阻塞驱动仍按曝光时间等待。
                 if not getattr(self.camera, 'read_waits_for_new_frame', False):
                     time.sleep(max(0.001, self.exposure_s * 1.1))
                 raw_img = self.camera.read_newest_image()
-                if raw_img is not None:
-                    # 检查图像是否为全黑
-                    if np.max(raw_img) > 0:
-                        break
-                    else:
-                        self.log_signal.emit(f"第 {i} 点第 {attempt+1} 次采集到全黑图像，重试...", "warning")
-                else:
-                    self.log_signal.emit(f"第 {i} 点第 {attempt+1} 次采集失败，重试...", "warning")
-            
-            if raw_img is not None:
+                if raw_img is None:
+                    raise RuntimeError(f"第 {i} 点未读取到图像，采集失败")
+                if np.max(raw_img) <= 0:
+                    raise RuntimeError(f"第 {i} 点读取到全黑图像，采集失败")
+
                 raw_img = self.worker_crop(raw_img)
-            
-            if raw_img is not None:
+                if raw_img is None:
+                    raise RuntimeError(f"第 {i} 点图像裁剪失败，采集失败")
+
                 # 处理暗场 
                 if self.dark_frame is not None:
+                    if raw_img.shape != self.dark_frame.shape:
+                        raise RuntimeError(
+                            "暗场尺寸与当前图像不一致: "
+                            f"图像={raw_img.shape}, 暗场={self.dark_frame.shape}"
+                        )
                     # 先转换为uint16，然后再转换为int32进行减法，避免溢出
                     img_uint16 = raw_img.astype(np.uint16)
                     dark_uint16 = self.dark_frame.astype(np.uint16)
@@ -364,12 +477,27 @@ class ScanWorker(QThread):
                 
                 # 扫描线程是采集期间唯一的相机读取者。
                 # 界面预览仅接收独立副本，不再从相机取帧。
-                self.update_signal.emit(final_data.copy(), cur_x, cur_y, i)
-            else:
-                self.log_signal.emit(f"第 {i} 点采集失败: 空图像", "warning")
+                logical_x, logical_y = self._physical_to_logical_position(
+                    cur_x, cur_y
+                )
+                self.update_signal.emit(
+                    final_data.copy(), logical_x, logical_y, i
+                )
 
-        # 循环结束
-        self.finished_signal.emit()
+            success = True
+            result_message = f"采集完成，共 {total} 点"
+        except Exception as e:
+            result_message = str(e)
+        finally:
+            if origin is not None:
+                try:
+                    self._return_stage_to_start(*origin)
+                except Exception as e:
+                    success = False
+                    result_message = (
+                        f"{result_message}；回到扫描起点失败: {e}"
+                    )
+            self.finished_signal.emit(success, result_message)
 
     def stop(self):
         self.is_running = False
@@ -388,37 +516,36 @@ class InteractiveImageView(QGraphicsView):
         self.np_img = None 
         self.setMouseTracking(True) 
         self.setStyleSheet("background: #000; border: 0px;")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.curr_img_x = -1
         self.curr_img_y = -1
+        self._image_size = None
+        self._mouse_timer = QElapsedTimer()
+        self._mouse_timer.start()
 
         self.v_line = None
         self.h_line = None
+        self.circle = None
 
-    def update_image(self, image_data, show_mask=False):
+    def update_image(self, image_data, show_mask=False, bit_depth=16):
         # ===========================
         # 显示图像
         # ===========================
         self.np_img = image_data
-        max_val = np.max(image_data)
-        unique_vals = np.unique(image_data)
-        unique_count = len(unique_vals)
-        
         if image_data.dtype == np.uint16:
-            display_data = image_data.astype(np.uint16)
+            display_data = image_data
         else:
-            display_data = image_data.astype(np.uint16) << 4
-
-        try:
-            if max_val < 4096 and unique_count <= 4096:
-                display_data = display_data.astype(np.uint16) << 4
-        except:
-            self.log_signal.emit(f"显示图像错误: {e}", "error")
-            return
+            display_data = np.asarray(image_data, dtype=np.uint16)
+        if bit_depth <= 12:
+            display_data = np.left_shift(display_data, 16 - bit_depth)
+        display_data = np.ascontiguousarray(display_data)
 
         h, w = display_data.shape
         qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16)
         pix = QPixmap.fromImage(qimg)
+        size_changed = self._image_size != (w, h)
+        self._image_size = (w, h)
         
         # 更新图片对象
         if self.pixmap_item is None:
@@ -430,43 +557,44 @@ class InteractiveImageView(QGraphicsView):
         # ===========================
         # Mask 绘制
         # ===========================
-        if getattr(self, 'v_line', None): 
-            self.scene.removeItem(self.v_line)
-            self.v_line = None
-            
-        if getattr(self, 'h_line', None): 
-            self.scene.removeItem(self.h_line)
-            self.h_line = None
-            
-        if getattr(self, 'circle', None): 
-            self.scene.removeItem(self.circle)
-            self.circle = None
-
-        # --- 第二步：如果勾选了显示，则重新绘制 ---
         if show_mask:
             cx, cy = w / 2 + 0.5 , h / 2 + 0.5
-            r = min(w, h) / 2 - 10  # 半径设为图像的 1/4
+            radius = max(0, min(w, h) / 2 - 10)
+            if self.v_line is None:
+                self.v_line = self.scene.addLine(
+                    0, 0, 0, 0, QPen(QColor("red"), 0, Qt.PenStyle.DashLine)
+                )
+                self.h_line = self.scene.addLine(
+                    0, 0, 0, 0, QPen(QColor("blue"), 0, Qt.PenStyle.DashLine)
+                )
+                self.circle = self.scene.addEllipse(
+                    0, 0, 0, 0, QPen(QColor("green"), 2, Qt.PenStyle.SolidLine)
+                )
+                for item in (self.v_line, self.h_line, self.circle):
+                    item.setZValue(10)
+            self.v_line.setLine(cx, 0, cx, h)
+            self.h_line.setLine(0, cy, w, cy)
+            self.circle.setRect(cx-radius, cy-radius, radius*2, radius*2)
 
-            # 定义笔 (颜色, 粗细, 样式)
-            pen_v = QPen(QColor("red"), 0, Qt.PenStyle.DashLine)
-            pen_h = QPen(QColor("blue"), 0, Qt.PenStyle.DashLine)
-            pen_c = QPen(QColor("green"), 2, Qt.PenStyle.SolidLine)
+        for item in (self.v_line, self.h_line, self.circle):
+            if item is not None:
+                item.setVisible(show_mask)
 
-            # 重新添加到场景中
-            self.v_line = self.scene.addLine(cx, 0, cx, h, pen_v)
-            self.h_line = self.scene.addLine(0, cy, w, cy, pen_h)
-            self.circle = self.scene.addEllipse(cx-r, cy-r, r*2, r*2, pen_c)
+        if size_changed:
+            self._fit_image()
 
-            # 设为顶层，确保不被图片遮挡
-            self.v_line.setZValue(10)
-            self.h_line.setZValue(10)
-            self.circle.setZValue(10)
+    def _fit_image(self):
+        if self.pixmap_item is not None and not self.pixmap_item.pixmap().isNull():
+            self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
 
-        # 自动适应视图大小
-        self.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_image()
 
     def mouseMoveEvent(self, event):
-        if self.np_img is not None and self.pixmap_item is not None:
+        if (self.np_img is not None and self.pixmap_item is not None
+                and self._mouse_timer.elapsed() >= 33):
+            self._mouse_timer.restart()
             scene_pos = self.mapToScene(event.pos())
             item_pos = self.pixmap_item.mapFromScene(scene_pos)
             x, y = int(item_pos.x()), int(item_pos.y())
@@ -507,10 +635,23 @@ class LogicWindow(ModernUI):
         
         # 实时流定时器
         self.timer = QTimer()
+        self.timer.setInterval(33)
         self.timer.timeout.connect(self.update_frame) 
+        self.camera_lock = threading.RLock()
+        self.live_worker = None
         self.is_live = False
         self.scan_in_progress = False
         self._resume_live_after_scan = False
+        self._is_saturated = None
+        self._mouse_is_saturated = None
+        self._log_lut = None
+        self._log_lut_bit_depth = None
+        self._stats_timer = QElapsedTimer()
+        self._stats_timer.start()
+        self._exposure_timer = QTimer(self)
+        self._exposure_timer.setSingleShot(True)
+        self._exposure_timer.setInterval(250)
+        self._exposure_timer.timeout.connect(self._apply_exposure_time)
         self.last_mouse_x = 0
         self.last_mouse_y = 0
         self.image_view.mouse_hover_signal.connect(self.on_mouse_moved)
@@ -601,11 +742,13 @@ class LogicWindow(ModernUI):
         if val is None: return 
         
         self.line_mouse_val.setText(f"{val}")
-        
-        if val >= self.saturation_value:
-            self.line_mouse_val.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
-        else:
-            self.line_mouse_val.setStyleSheet("color: blue; font-weight: bold; background: #f0f0f0;")
+        is_saturated = val >= self.saturation_value
+        if is_saturated != self._mouse_is_saturated:
+            self._mouse_is_saturated = is_saturated
+            if is_saturated:
+                self.line_mouse_val.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
+            else:
+                self.line_mouse_val.setStyleSheet("color: blue; font-weight: bold; background: #f0f0f0;")
 
     # --- 异步加载设备 ---
     def start_init_camera(self):
@@ -627,7 +770,7 @@ class LogicWindow(ModernUI):
         if success:
             self.camera = result
             # 1. 应用曝光
-            self.set_exposure_time()
+            self._apply_exposure_time()
             self.camera.start_acquisition()
             self.btn_open_cam.setText("已就绪")
             self.btn_open_cam.setStyleSheet("background-color: #4CAF50; color: white;")
@@ -775,29 +918,31 @@ class LogicWindow(ModernUI):
         if self.scan_in_progress:
             return
 
-        if self.camera:
+        if self.camera and self.live_worker:
             try:
-                if type(self.camera).__name__ == "NewVSYCamera":
-                    self.camera.start_acquisition()
-
-                # 获取并裁剪图像
-                img = self.camera.read_newest_image()
+                # 取帧由后台线程完成，GUI 只消费最新帧。
+                img = self.live_worker.take_latest_frame()
                 if img is None: return
                 cropped_img = self.crop_image(img)
+                if cropped_img is None: return
                 
                 # ==========================================
                 # 全局最大值监测与饱和报警
                 # ==========================================
-                max_val = np.max(cropped_img)
-                self.line_global_max.setText(f"{max_val}")
-                
-                # 检查是否过曝
-                limit = getattr(self, 'saturation_value', 2**self.bit_depth - 1)
-                
-                if max_val >= limit:
-                    self.line_global_max.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
-                else:
-                    self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
+                # 数值和样式统计最高 10 Hz，预览仍保持 30 FPS。
+                update_stats = self._stats_timer.elapsed() >= 100
+                if update_stats:
+                    self._stats_timer.restart()
+                    max_val = np.max(cropped_img)
+                    self.line_global_max.setText(f"{max_val}")
+                    limit = getattr(self, 'saturation_value', 2**self.bit_depth - 1)
+                    is_saturated = max_val >= limit
+                    if is_saturated != self._is_saturated:
+                        self._is_saturated = is_saturated
+                        if is_saturated:
+                            self.line_global_max.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
+                        else:
+                            self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
 
                 # count = np.sum(np.array(cropped_img) >= limit)
                 # self.line_saturation.setText(f"{count}")
@@ -811,25 +956,31 @@ class LogicWindow(ModernUI):
                 
                 # 处理 Log 变换
                 if self.chk_log.isChecked():
-                    # log(1+x) 变换，拉伸暗部细节
-                    img_disp = (np.sqrt(2**self.bit_depth - 1) * np.sqrt(cropped_img)).astype(np.uint16)
-                    self.image_view.update_image(img_disp, show_mask)
+                    if self._log_lut is None or self._log_lut_bit_depth != self.bit_depth:
+                        max_input = (1 << min(self.bit_depth, 16)) - 1
+                        values = np.arange(max_input + 1, dtype=np.float32)
+                        self._log_lut = (
+                            np.sqrt(max_input) * np.sqrt(values)
+                        ).clip(0, 65535).astype(np.uint16)
+                        self._log_lut_bit_depth = self.bit_depth
+                    lut_index = np.clip(cropped_img, 0, len(self._log_lut) - 1)
+                    img_disp = self._log_lut[lut_index]
+                    self.image_view.update_image(img_disp, show_mask, bit_depth=16)
                 else:
                     # 正常线性显示
-                    self.image_view.update_image(cropped_img, show_mask)
+                    self.image_view.update_image(cropped_img, show_mask, bit_depth=self.bit_depth)
 
                 # ==========================================
                 # 鼠标悬停数值更新 (防止 ROI 变化导致越界)
                 # ==========================================
-                h, w = cropped_img.shape
-                if 0 <= self.last_mouse_x < w and 0 <= self.last_mouse_y < h:
-                    # 从【原始数据】中取出值 (即使在 Log 模式下，也显示原始光子数)
-                    current_val = cropped_img[self.last_mouse_y, self.last_mouse_x]
-                    self.update_pixel_display(current_val)
-                else:
-                    # 越界重置
-                    self.last_mouse_x = w // 2
-                    self.last_mouse_y = h // 2
+                if update_stats:
+                    h, w = cropped_img.shape
+                    if 0 <= self.last_mouse_x < w and 0 <= self.last_mouse_y < h:
+                        current_val = cropped_img[self.last_mouse_y, self.last_mouse_x]
+                        self.update_pixel_display(current_val)
+                    else:
+                        self.last_mouse_x = w // 2
+                        self.last_mouse_y = h // 2
             
             except Exception as e:
                 self.log_error(f"更新图像时出错: {e}")
@@ -844,38 +995,69 @@ class LogicWindow(ModernUI):
             return
 
         if self.is_live:
-            # === 如果当前是启动状态，则停止 ===
-            self.timer.stop()  # 停止定时器
-            self.is_live = False
-            
-            # 更新按钮样式
-            self.btn_live.setText("👁 启动")
-            self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;height: 45px;")
-            self.log_info("实时显示已停止")
+            if self._stop_live_preview():
+                self.log_info("实时显示已停止")
         else:
-            # 根据您相机的曝光时间
-            exposure_ms = self.exposure_spin.value()
-            refresh_interval = max(10, int(exposure_ms)) 
-            
-            self.timer.start(refresh_interval)
-            self.is_live = True
-            
-            # 更新按钮样式
-            self.btn_live.setText("⬛ 停止")
-            self.btn_live.setStyleSheet("background:#7f8c8d;color:white;font-weight:bold;height: 45px;")
-            self.log_success("实时显示已启动")
+            if self._start_live_preview():
+                self.log_success("实时显示已启动（30 FPS）")
+
+    def _start_live_preview(self):
+        if not self.camera:
+            return False
+        if self.live_worker is not None:
+            if self.live_worker.isRunning():
+                self.log_warning("上一个取帧线程仍在停止中")
+                return False
+            self.live_worker.deleteLater()
+            self.live_worker = None
+        self.live_worker = LivePreviewWorker(self.camera, self.camera_lock, fps=30)
+        self.live_worker.error_signal.connect(self._on_live_error)
+        self.live_worker.exposure_applied.connect(self._on_exposure_applied)
+        self.live_worker.start()
+        self.timer.start()
+        self.is_live = True
+        self.btn_live.setText("⬛ 停止")
+        self.btn_live.setStyleSheet(
+            "background:#7f8c8d;color:white;font-weight:bold;min-height:40px;"
+        )
+        return True
+
+    def _stop_live_preview(self, wait_ms=2000):
+        self.timer.stop()
+        self.is_live = False
+        if self.live_worker is not None:
+            self.live_worker.stop()
+            self.live_worker.wait(wait_ms)
+            if self.live_worker.isRunning():
+                self.log_warning("相机取帧线程仍在停止中")
+                return False
+            self.live_worker.deleteLater()
+            self.live_worker = None
+        self.btn_live.setText("👁 启动")
+        self.btn_live.setStyleSheet(
+            "background:#27ae60;color:white;font-weight:bold;min-height:40px;"
+        )
+        return True
+
+    def _on_live_error(self, message):
+        self.log_error(f"实时取帧失败: {message}")
+        self._stop_live_preview()
+
+    def _on_exposure_applied(self, exposure_ms):
+        self.log_info(f"曝光: {exposure_ms:g} ms")
 
     def _pause_live_preview_for_scan(self):
         """让扫描线程独占相机，记住扫描后是否需要恢复实时预览。"""
         self._resume_live_after_scan = self.is_live
-        self.timer.stop()
-        self.is_live = False
+        if self.live_worker is not None and not self._stop_live_preview(wait_ms=3000):
+            return False
         self.scan_in_progress = True
         self.btn_live.setEnabled(False)
         self.btn_live.setText("扫描预览中...")
         self.btn_live.setStyleSheet(
-            "background:#7f8c8d;color:white;font-weight:bold;height: 45px;"
+            "background:#7f8c8d;color:white;font-weight:bold;min-height:40px;"
         )
+        return True
 
     def _restore_live_preview_after_scan(self):
         """扫描结束后恢复按钮，并按扫描前的状态恢复实时预览。"""
@@ -889,25 +1071,23 @@ class LogicWindow(ModernUI):
             and getattr(self.camera, 'supports_software_trigger', False)
         ):
             try:
-                self.camera.set_trigger_mode('continuous')
+                with self.camera_lock:
+                    self.camera.set_trigger_mode('continuous')
             except Exception as e:
                 self.log_warning(f"恢复相机连续采集模式失败: {e}")
 
+        # 扫描期间修改的曝光值在此时统一下发。
+        self._exposure_timer.stop()
+        self._apply_exposure_time()
+
         if should_resume and self.camera:
-            exposure_ms = self.exposure_spin.value()
-            refresh_interval = max(10, int(exposure_ms))
-            self.timer.start(refresh_interval)
-            self.is_live = True
-            self.btn_live.setText("⬛ 停止")
-            self.btn_live.setStyleSheet(
-                "background:#7f8c8d;color:white;font-weight:bold;height: 45px;"
-            )
-            self.log_info("扫描结束，已恢复实时预览")
+            if self._start_live_preview():
+                self.log_info("扫描结束，已恢复实时预览")
         else:
             self.is_live = False
             self.btn_live.setText("👁 启动")
             self.btn_live.setStyleSheet(
-                "background:#27ae60;color:white;font-weight:bold;height: 45px;"
+                "background:#27ae60;color:white;font-weight:bold;min-height:40px;"
             )
 
     def calculate_center(self): #todo
@@ -1055,6 +1235,7 @@ class LogicWindow(ModernUI):
     def preview_scan_path(self):
         try:
             from Scanner import Scanner
+            import matplotlib.pyplot as plt
             mode_map = {
                 "矩形": "rectangle", 
                 "圆形": "round", 
@@ -1230,7 +1411,8 @@ class LogicWindow(ModernUI):
 
         dark_result = dark_msg.exec()
         if dark_result == QMessageBox.StandardButton.Yes:
-            img_dark = self.camera.read_newest_image()
+            with self.camera_lock:
+                img_dark = self.camera.read_newest_image()
             if img_dark is None:
                 self.log_error("暗场采集失败：无法获取图像")
                 self.btn_cap.setEnabled(True)
@@ -1296,6 +1478,11 @@ class LogicWindow(ModernUI):
             ox, oy = 0, 0
             
         crop_params_tuple = (w, h, ox, oy) # 打包成元组
+        axis_mapping = (
+            self.stage_widget.check_swap.isChecked(),
+            self.stage_widget.check_inv_x.isChecked(),
+            self.stage_widget.check_inv_y.isChecked(),
+        )
 
         # === 【修改】 实例化 Worker 时传入参数 ===
         self.worker = ScanWorker(
@@ -1304,13 +1491,18 @@ class LogicWindow(ModernUI):
             scanner=self.scanner,
             exposure_time_ms=exposure_val,
             crop_params=crop_params_tuple,  # <--- 传入这里
-            dark_frame=self.dark_frame
+            dark_frame=self.dark_frame,
+            axis_mapping=axis_mapping,
         )
         self.worker.update_signal.connect(self._update_scan_preview)
         self.worker.log_signal.connect(self._worker_log)
         self.worker.finished_signal.connect(self._scan_finished)
 
-        self._pause_live_preview_for_scan()
+        if not self._pause_live_preview_for_scan():
+            self.btn_cap.setEnabled(True)
+            self.btn_cap.setText("🔴 采集")
+            self.log_error("无法停止实时取帧，扫描未启动")
+            return
         try:
             self.worker.start()
         except Exception as e:
@@ -1340,7 +1532,9 @@ class LogicWindow(ModernUI):
         """     
         # 更新界面图像显示
         show_mask = self.chk_mask.isChecked()
-        self.image_view.update_image(img_data, show_mask=show_mask)
+        self.image_view.update_image(
+            img_data, show_mask=show_mask, bit_depth=self.bit_depth
+        )
 
         frame_name = f"scan_{idx:03d}.tif"
         raw_data_dir = os.path.join(self.save_dir, "raw_data")
@@ -1360,14 +1554,14 @@ class LogicWindow(ModernUI):
         # 写入 H5
         self._write_scan_to_h5(img_data, cur_x, cur_y)
 
-    def _scan_finished(self):
-        self.log_success("H5 文件写入完成！")
-        
-        # 回到原点
-        final_x = self.scanner.final_pos[0]
-        final_y = self.scanner.final_pos[1]
-        self._move_logical_delta(-final_x, 0)
-        self._move_logical_delta(-final_y, 1)  
+    def _scan_finished(self, success, message):
+        if success:
+            self.log_success(f"{message}，H5 文件写入完成！")
+        else:
+            self.log_error(message)
+
+        # ScanWorker 已依据硬件实际位置回到本次扫描的起点。
+        self.sync_hardware_position()
         self.pos_ref = True
         self.btn_cap.setEnabled(True)  # 锁定按钮
         self.btn_cap.setText("🔴 采集")
@@ -1467,10 +1661,23 @@ class LogicWindow(ModernUI):
             traceback.print_exc()
 
     def set_exposure_time(self):
-        if self.camera:
-            val = self.exposure_spin.value()
-            self.camera.set_ex_time(val / 1000.0)
-            self.log_info(f"曝光: {val} ms")
+        """参数输入防抖：用户停止修改 250 ms 后再下发最终值。"""
+        self._exposure_timer.start()
+
+    def _apply_exposure_time(self):
+        if not self.camera or self.scan_in_progress:
+            return
+        exposure_ms = self.exposure_spin.value()
+        exposure_seconds = exposure_ms / 1000.0
+        if self.live_worker is not None and self.live_worker.isRunning():
+            self.live_worker.request_exposure(exposure_seconds)
+            return
+        try:
+            with self.camera_lock:
+                self.camera.set_ex_time(exposure_seconds)
+            self._on_exposure_applied(exposure_ms)
+        except Exception as exc:
+            self.log_error(f"设置曝光失败: {exc}")
 
     def select_folder(self):
         path = QFileDialog.getExistingDirectory(self, "选择保存目录")
@@ -1501,7 +1708,8 @@ class LogicWindow(ModernUI):
             result = msg.exec()
 
             if result == QMessageBox.StandardButton.Yes:
-                self.cmi_dark = self.camera.read_newest_image()
+                with self.camera_lock:
+                    self.cmi_dark = self.camera.read_newest_image()
                 if self.cmi_dark is None:
                     self.log_error("暗场采集失败：无法获取图像")
                     return
@@ -1590,7 +1798,8 @@ class LogicWindow(ModernUI):
 
         try:
             # 1. 获取并裁剪图像
-            full_img = self.camera.read_newest_image()
+            with self.camera_lock:
+                full_img = self.camera.read_newest_image()
             if full_img is None: 
                 return None
             
@@ -1631,6 +1840,26 @@ class LogicWindow(ModernUI):
             self.log_error(f"保存帧异常: {e}")
             traceback.print_exc()
             return None, 0, 0
+
+    def closeEvent(self, event):
+        """退出前安全停止取帧/扫描线程，避免 QThread 运行中被销毁。"""
+        self.timer.stop()
+        self._exposure_timer.stop()
+
+        if self.live_worker is not None and not self._stop_live_preview(wait_ms=1000):
+            event.ignore()
+            QTimer.singleShot(300, self.close)
+            return
+
+        worker = getattr(self, 'worker', None)
+        if worker is not None and worker.isRunning():
+            worker.stop()
+            if not worker.wait(1000):
+                event.ignore()
+                QTimer.singleShot(300, self.close)
+                return
+
+        super().closeEvent(event)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
