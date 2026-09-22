@@ -86,6 +86,11 @@ class DeviceLoader(QThread):
                     case "PCO":
                         from camera import PCOCamera
                         device_instance = PCOCamera()   
+                    case "Thorlabs":
+                        module = _load_driver_module(
+                            "Thorlabs", "thorlabs_camera"
+                        )
+                        device_instance = module.ThorlabsCamera()
                     case "QHY":
                         module = _load_driver_module("QHY", "QHY")
                         device_instance = module.QHYCamera()
@@ -1858,6 +1863,18 @@ class LogicWindow(ModernUI):
                 event.ignore()
                 QTimer.singleShot(300, self.close)
                 return
+
+        if self.camera is not None:
+            try:
+                with self.camera_lock:
+                    if hasattr(self.camera, 'close'):
+                        self.camera.close()
+                    elif hasattr(self.camera, 'stop_acquisition'):
+                        self.camera.stop_acquisition()
+            except Exception as e:
+                self.log_warning(f"关闭相机时出现异常: {e}")
+            finally:
+                self.camera = None
 
         super().closeEvent(event)
 
