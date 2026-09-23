@@ -7,3 +7,6 @@
 
 ## PM 相机
 启动前必须把曝光调整到大于10ms，不然无法读图
+
+## PCO 相机
+驱动最好安在ProgramFiles或ProgramFiles（x86）路径下

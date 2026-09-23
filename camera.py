@@ -211,9 +211,9 @@ class PCOCamera(Camera):
         if self.cam is None:
             return
         try:
-            # self.cam.stop_acquisition()
+            self.cam.stop_acquisition()
             self.cam.set_exposure(ex_time)
-            # self.cam.stop_acquisition()
+            self.cam.start_acquisition()
         except Exception as e:
             print(f'PCO曝光时间设置失败：{e}')
     
