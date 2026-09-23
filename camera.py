@@ -5,6 +5,43 @@ import os
 import sys
 
 
+_PCO_DLL_DIRECTORY_HANDLES = []
+
+
+def _configure_pco_sc2_dll(pylablib):
+    """Locate the SC2 SDK installed with recent pco.camware releases."""
+    configured = os.getenv("PCO_SC2_DLL")
+    candidates = []
+    if configured:
+        candidates.append(configured)
+
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+        program_files = os.getenv(env_name)
+        if not program_files:
+            continue
+        toolbox = os.path.join(program_files, "PCO Digital Camera Toolbox")
+        candidates.extend(
+            [
+                os.path.join(toolbox, "pco.camware"),
+                os.path.join(toolbox, "pco.sdk", "bin64"),
+                os.path.join(toolbox, "pco.sdk", "bin"),
+            ]
+        )
+
+    for candidate in candidates:
+        dll_path = candidate if candidate.lower().endswith(".dll") else os.path.join(candidate, "SC2_Cam.dll")
+        if not os.path.isfile(dll_path):
+            continue
+
+        dll_dir = os.path.dirname(dll_path)
+        pylablib.par["devices/dlls/pco_sc2"] = dll_dir
+        if os.name == "nt" and hasattr(os, "add_dll_directory"):
+            _PCO_DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(dll_dir))
+        return dll_path
+
+    return None
+
+
 class Camera(ABC):
     def __init__(self):
         super().__init__()
@@ -157,6 +194,9 @@ class Ham(Camera):
 
 class PCOCamera(Camera):
     def __init__(self):
+        import pylablib
+
+        _configure_pco_sc2_dll(pylablib)
         from pylablib.devices import PCO
 
         try:
@@ -164,7 +204,7 @@ class PCOCamera(Camera):
             print("成功连接到PCO相机")
         except Exception as e:
             self.cam = None
-            print(f"PCO相机连接失败: {e}")
+            raise RuntimeError(f"PCO相机连接失败: {e}") from e
 
     def set_ex_time(self, ex_time):
         """设置曝光时间（单位：秒）"""
