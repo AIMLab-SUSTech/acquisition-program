@@ -102,7 +102,7 @@ class DeviceLoader(QThread):
                         module = _load_driver_module(
                             "SSZN", "SSZNCamera", extra_dll_dirs=(PE_LIBRARY_DIR,)
                         )
-                        device_instance = module.SSZNCamera()
+                        device_instance = module.SSZNCamera() 
                         if not device_instance.connect():
                             raise RuntimeError("SSZN 相机连接失败")
                     case "SC":
