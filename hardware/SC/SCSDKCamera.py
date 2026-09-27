@@ -40,6 +40,25 @@ from SCDefines import (
 )
 
 
+_READOUT_MODE_FEATURE = "ReadoutMode"
+
+# Qbit 系列把“单光子模式”实现为高增益、低噪声读出，而不是标准
+# GenICam AcquisitionMode（后者仅表示 Continuous/SingleFrame/MultiFrame）。
+# 新固件提供 HG_LN；旧固件则只有不同速率的 HG 档位。
+_SINGLE_PHOTON_READOUT_CANDIDATES = (
+    "HG_LN",
+    "HG_one_eighth_rate",
+    "HG_quarter_rate",
+    "HG_half_rate",
+    "HG_full_rate",
+)
+
+_NORMAL_READOUT_CANDIDATES = (
+    "HDR_full_rate",
+    "HDR",
+)
+
+
 def _enum_devices(interface_type=SC_EInterfaceType.eInterfaceTypeAll.value):
     """枚举相机设备，返回设备信息列表"""
     device_list = SC_DeviceList()
@@ -143,7 +162,8 @@ class SCSDKCamera(Camera):
                  interface_type: int = SC_EInterfaceType.eInterfaceTypeAll.value,
                  log_path: str = 'RevealerLog',
                  buffer_count: int = 10,
-                 bit_depth: int = 16):
+                 bit_depth: int = 16,
+                 single_photon_mode: bool = True):
         super().__init__()
         self.camera_index = camera_index
         self.sdk = None
@@ -160,6 +180,9 @@ class SCSDKCamera(Camera):
         self._latest_frame_id = None
         self._callback_error = None
         self._current_bit_depth = None
+        self._current_readout_mode = None
+        self._readout_mode_before_single_photon = None
+        self.device_info = None
 
         # 1. 初始化 SDK（同一进程内仅生效一次）
         self.sdk = SCSDK()
@@ -176,6 +199,7 @@ class SCSDKCamera(Camera):
             raise ValueError(
                 f"相机索引越界: 发现 {len(devices)} 台相机，请求索引为 {camera_index}"
             )
+        self.device_info = devices[camera_index].copy()
 
         # 3. 创建设备句柄
         n_ret = self.sdk.SC_CreateHandle(
@@ -193,6 +217,12 @@ class SCSDKCamera(Camera):
 
         # 设置内部帧缓存大小
         self.sdk.SC_SetBufferCount(buffer_count)
+
+        # Qbit 的“单光子模式”对应 ReadoutMode 的高增益低噪声档位。
+        # 仅在固件实际暴露该档位时自动切换，不影响其他 SC 型号。
+        if single_photon_mode and self.supports_single_photon_mode():
+            if not self.set_single_photon_mode(True):
+                raise RuntimeError("SCSDK 切换单光子模式失败")
 
         # 相机固件默认 12bit，默认切换为 16bit 模式
         self.set_bit_depth(bit_depth)
@@ -468,6 +498,169 @@ class SCSDKCamera(Camera):
                 print(f"设置位深失败，错误码: {n_ret}")
         except Exception as e:
             print(f"设置位深异常: {e}")
+
+    def get_readout_modes(self) -> list:
+        """返回 ReadoutMode 可用项 ``[(value, symbol), ...]``。"""
+        return self.get_enum_entries(_READOUT_MODE_FEATURE)
+
+    def get_readout_mode(self):
+        """获取当前读出模式符号，读取失败时返回 None。"""
+        if not self.is_open:
+            return self._current_readout_mode
+        try:
+            symbol = SC_String()
+            n_ret = self.sdk.SC_GetEnumFeatureSymbol(
+                _READOUT_MODE_FEATURE, symbol
+            )
+            if n_ret == SC_OK:
+                self._current_readout_mode = symbol.str.decode("utf-8")
+                return self._current_readout_mode
+        except Exception as e:
+            print(f"读取读出模式异常: {e}")
+        return None
+
+    def set_readout_mode(self, mode) -> bool:
+        """
+        设置相机 ReadoutMode，并读回确认。
+
+        ``mode`` 可传枚举符号（如 ``"HG_LN"``）或枚举值。模式切换
+        必须在停止取流时完成；若调用前正在采集，完成后会自动恢复。
+        """
+        if not self.is_open:
+            return False
+
+        entries = self.get_readout_modes()
+        if not entries:
+            print("SCSDK: 当前相机不支持 ReadoutMode")
+            return False
+
+        target_value = None
+        target_symbol = None
+        if isinstance(mode, str):
+            requested = mode.casefold()
+            for value, symbol in entries:
+                if symbol.casefold() == requested:
+                    target_value = int(value)
+                    target_symbol = symbol
+                    break
+        elif isinstance(mode, int) and not isinstance(mode, bool):
+            for value, symbol in entries:
+                if int(value) == mode:
+                    target_value = int(value)
+                    target_symbol = symbol
+                    break
+        else:
+            print(f"SCSDK: 无效的读出模式: {mode!r}")
+            return False
+
+        if target_symbol is None:
+            print(
+                f"SCSDK: ReadoutMode 中找不到 {mode!r}，"
+                f"可用项: {entries}"
+            )
+            return False
+
+        current = self.get_readout_mode()
+        if current == target_symbol:
+            return True
+
+        was_grabbing = self.is_grabbing
+        try:
+            if was_grabbing:
+                self.stop_acquisition()
+
+            n_ret = self.sdk.SC_SetEnumFeatureSymbol(
+                _READOUT_MODE_FEATURE, target_symbol
+            )
+            if n_ret != SC_OK:
+                print(
+                    f"SCSDK: 设置 ReadoutMode={target_symbol} 失败，"
+                    f"错误码: {n_ret}"
+                )
+                return False
+
+            readback = self.get_readout_mode()
+            if readback != target_symbol:
+                print(
+                    f"SCSDK: ReadoutMode 读回校验失败，"
+                    f"期望 {target_symbol}，实际 {readback}"
+                )
+                return False
+
+            self._current_readout_mode = readback
+            print(
+                f"SCSDK: ReadoutMode 已切换为 {readback} "
+                f"(枚举值: {target_value})"
+            )
+            return True
+        except Exception as e:
+            print(f"SCSDK: 设置读出模式异常: {e}")
+            return False
+        finally:
+            if was_grabbing and not self.is_grabbing:
+                self.start_acquisition()
+
+    def supports_single_photon_mode(self) -> bool:
+        """当前相机是否提供可用于单光子采集的高增益读出档位。"""
+        symbols = {symbol.casefold() for _, symbol in self.get_readout_modes()}
+        return any(
+            candidate.casefold() in symbols
+            for candidate in _SINGLE_PHOTON_READOUT_CANDIDATES
+        )
+
+    def set_single_photon_mode(self, enabled: bool = True) -> bool:
+        """
+        开启或关闭 Qbit 单光子采集模式。
+
+        开启时优先选择 ``HG_LN``（高增益低噪声）；若旧固件没有该项，
+        按噪声由低到高选择可用的 HG 档位。关闭时优先恢复开启前模式，
+        否则回到 ``HDR_full_rate``。
+        """
+        entries = self.get_readout_modes()
+        symbol_by_key = {
+            symbol.casefold(): symbol for _, symbol in entries
+        }
+        if not symbol_by_key:
+            print("SCSDK: 当前相机不支持单光子模式切换")
+            return False
+
+        current = self.get_readout_mode()
+        if enabled:
+            photon_symbols = {
+                candidate.casefold()
+                for candidate in _SINGLE_PHOTON_READOUT_CANDIDATES
+            }
+            if current and current.casefold() not in photon_symbols:
+                self._readout_mode_before_single_photon = current
+
+            for candidate in _SINGLE_PHOTON_READOUT_CANDIDATES:
+                target = symbol_by_key.get(candidate.casefold())
+                if target is not None:
+                    ok = self.set_readout_mode(target)
+                    if ok:
+                        print(f"SCSDK: 已开启单光子模式 ({target})")
+                    return ok
+            print(
+                "SCSDK: ReadoutMode 未提供单光子高增益档位，"
+                f"可用项: {entries}"
+            )
+            return False
+
+        restore_candidates = []
+        if self._readout_mode_before_single_photon:
+            restore_candidates.append(self._readout_mode_before_single_photon)
+        restore_candidates.extend(_NORMAL_READOUT_CANDIDATES)
+        for candidate in restore_candidates:
+            target = symbol_by_key.get(candidate.casefold())
+            if target is not None:
+                ok = self.set_readout_mode(target)
+                if ok:
+                    self._readout_mode_before_single_photon = None
+                    print(f"SCSDK: 已关闭单光子模式 ({target})")
+                return ok
+
+        print(f"SCSDK: 找不到可恢复的普通读出模式，可用项: {entries}")
+        return False
 
     def set_dpc(self, grade: int = 0) -> bool:
         """

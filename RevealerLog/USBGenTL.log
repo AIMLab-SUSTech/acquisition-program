@@ -1,0 +1,125 @@
+[2026-09-27 10:39:14.173] [info] [thread id: 24632] init log fileSize: 10485760, fileNum: 5, filePath: RevealerLog/USBGenTL.log, level: 2
+[2026-09-27 10:39:14.174] [info] [thread id: 24632] init GenTL System C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program:
+[2026-09-27 10:39:14.174] [info] [thread id: 24632] USBSystemGenTL construct 2_usb3014
+[2026-09-27 10:39:14.174] [info] [thread id: 24632] updateInterfaceList 0x19954c57d30, ZKSJ USB INTERFACE
+[2026-09-27 10:39:14.174] [info] [thread id: 24632] TLOpenInterface start 0x0
+[2026-09-27 10:39:14.175] [info] [thread id: 24632] TLOpenInterface finish
+[2026-09-27 10:39:14.175] [warning] [thread id: 24632] getPortURL not implemented yet
+[2026-09-27 10:39:14.176] [warning] [thread id: 24632] getPortURL not implemented yet
+[2026-09-27 10:39:14.176] [info] [thread id: 24632] GenTL::USBInterfaceGenTL::updateDeviceList:30
+[2026-09-27 10:39:14.197] [info] [thread id: 24632] GenTL::USBInterfaceGenTL::updateDeviceList:37
+[2026-09-27 10:39:14.197] [warning] [thread id: 24632] get device info not implemented:6
+[2026-09-27 10:39:14.200] [info] [thread id: 24632] USB Camera created, deviceid:40010441014, thread:24632
+[2026-09-27 10:39:14.200] [info] [thread id: 24632] USBCamera::open start
+[2026-09-27 10:39:14.207] [info] [thread id: 24632] insert to sharedMem 0,24632
+[2026-09-27 10:39:14.208] [info] [thread id: 24632] USBCamera::threadExit start, deviceid:40010441014
+[2026-09-27 10:39:14.208] [info] [thread id: 24632] USBCamera::threadExit end, deviceid:40010441014
+[2026-09-27 10:39:14.208] [warning] [thread id: 39704] sharedMemory find deviceState failed: 24632
+[2026-09-27 10:39:14.240] [info] [thread id: 24632] SCCmdUSB::stopThread start
+[2026-09-27 10:39:14.240] [info] [thread id: 24632] SCCmdUSB::stopThread end
+[2026-09-27 10:39:14.251] [info] [thread id: 24632] USBCamera::open finished openMode:4, deviceid:40010441014, threadId:24632
+[2026-09-27 10:39:14.251] [info] [thread id: 24632] GenTL::USBDeviceGenTL::openDevice camera open finish
+[2026-09-27 10:39:14.454] [info] [thread id: 24632] GenTL::USBDeviceGenTL::openDevice camera init finish
+[2026-09-27 10:39:14.454] [info] [thread id: 24632] createDataStream 0:datastream0
+[2026-09-27 10:39:14.454] [info] [thread id: 24632] open device success: openMode:4, handle:0x19954c57d70
+[2026-09-27 10:39:14.454] [info] [thread id: 24632] openDevice 40010441014,0x19954c57d70
+[2026-09-27 10:39:14.454] [warning] [thread id: 24632] getPortURL not implemented yet
+[2026-09-27 10:39:14.456] [info] [thread id: 24632] getDevPort 0x19954c57d20
+[2026-09-27 10:39:14.797] [info] [thread id: 33324] getDataStreamId: datastream0
+[2026-09-27 10:39:14.804] [info] [thread id: 33324] openDataStream datastream0
+[2026-09-27 10:39:14.806] [info] [thread id: 33324] open DataStream: 0x19954f91f30
+[2026-09-27 10:39:14.806] [info] [thread id: 33324] getDSInfo: 7
+[2026-09-27 10:39:14.811] [info] [thread id: 33324] GenTL::USBDataBuffer::USBDataBuffer iSize=18890752, subFrames=1, bytesPerSubFrame=18890752
+[2026-09-27 10:39:14.821] [info] [thread id: 33324] GenTL::USBDataBuffer::USBDataBuffer iSize=18890752, subFrames=1, bytesPerSubFrame=18890752
+[2026-09-27 10:39:14.825] [info] [thread id: 33324] registerEvent: 1
+[2026-09-27 10:39:14.825] [info] [thread id: 33324] registerEvent 1
+[2026-09-27 10:39:14.825] [info] [thread id: 33324] USBCamera::startAcquisition start, deviceid:40010441014
+[2026-09-27 10:39:14.828] [info] [thread id: 33324] RSCNS::AGStreamUSB::start start
+[2026-09-27 10:39:14.829] [info] [thread id: 33324] StreamUSB stop 0x19954fe43b0
+[2026-09-27 10:39:14.829] [info] [thread id: 33324] StreamUSB stop end 0x19954fe43b0
+[2026-09-27 10:39:14.829] [info] [thread id: 33324] CCyUSBEndPoint::Reset start addr:129
+[2026-09-27 10:39:14.830] [info] [thread id: 33324] CCyUSBEndPoint::Reset end, addr:129
+[2026-09-27 10:39:14.882] [info] [thread id: 33324] RSCNS::AGStreamUSB::start , (frameSize:14168064,frameRate:4.995254508192241,totalBufferSize:127512576,frameBufCnt:9, bufferNum:32,bufferSize:1048576)
+[2026-09-27 10:39:14.882] [info] [thread id: 33324] USBCamera::startAcquisition end, deviceid:40010441014
+[2026-09-27 10:39:14.882] [info] [thread id: 37604] RSCNS::AGStreamUSB::onCallbackThread begin
+[2026-09-27 10:39:14.882] [info] [thread id: 33324] startAcquisition finish 0
+[2026-09-27 10:39:14.883] [info] [thread id: 33992] start recvThread (bufLen:1048576, frameRate:4.995254508192241, frameSize:14168064, waitNum:11)
+[2026-09-27 10:39:14.886] [warning] [thread id: 33992] RSCNS::AGStreamUSB::processOnePacket find header failed
+[2026-09-27 10:39:14.889] [warning] [thread id: 33992] RSCNS::AGStreamUSB::processOnePacket find header failed
+[2026-09-27 10:39:14.891] [warning] [thread id: 33992] RSCNS::AGStreamUSB::processOnePacket find header failed
+[2026-09-27 10:39:14.918] [warning] [thread id: 33992] RSCNS::AGStreamUSB::processOnePacket find header failed
+[2026-09-27 10:39:14.918] [warning] [thread id: 33992] RSCNS::AGStreamUSB::processOnePacket find header failed
+[2026-09-27 10:39:15.916] [info] [thread id: 33992] recv first frame 4:
+[2026-09-27 10:39:15.916] [info] [thread id: 33992] reporter recvFrame:1, recvSum: 1, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:16.931] [info] [thread id: 33992] reporter recvFrame:5, recvSum: 6, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:16.938] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4086, max:5420us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:18.133] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 12, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:18.139] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:3974, max:5786us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:19.334] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 18, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:19.340] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4216, max:5135us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:20.535] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 24, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:20.543] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4757, max:6090us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:21.737] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 30, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:21.746] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:5303, max:6897us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:22.937] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 36, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:22.945] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4792, max:6882us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:24.131] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 42, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:24.138] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4466, max:5563us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:25.147] [info] [thread id: 33992] reporter recvFrame:5, recvSum: 47, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:25.152] [info] [thread id: 37604] USBDataBuffer setData stats fps:5, avg:4004, max:4354us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:26.348] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 53, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:26.355] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:3969, max:4489us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:27.549] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 59, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:27.554] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4010, max:4617us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:28.751] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 65, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:28.760] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4276, max:5739us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:29.951] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 71, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:29.957] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4396, max:5567us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:31.153] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 77, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:31.158] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:3735, max:4775us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:32.346] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 83, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:32.352] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4290, max:7339us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:33.362] [info] [thread id: 33992] reporter recvFrame:5, recvSum: 88, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:33.368] [info] [thread id: 37604] USBDataBuffer setData stats fps:5, avg:4106, max:5409us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:34.563] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 94, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:34.573] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4188, max:6239us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:35.765] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 100, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:35.771] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:3938, max:5608us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:36.965] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 106, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:36.971] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4323, max:4870us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:38.156] [info] [thread id: 33992] reporter recvFrame:6, recvSum: 112, lostFrame:0, lostTotal:0, queueLost:0, MempoolLost:0, ErrorFrameCount:0
+[2026-09-27 10:39:38.162] [info] [thread id: 37604] USBDataBuffer setData stats fps:6, avg:4925, max:6221us, outputLen:18890752, width:4096, height:2306, pixel:17825797, subFrames:1
+[2026-09-27 10:39:38.272] [info] [thread id: 33324] USBCamera::stopAcquisition start
+[2026-09-27 10:39:38.272] [info] [thread id: 33324] StreamUSB stop 0x19954fe43b0
+[2026-09-27 10:39:38.273] [info] [thread id: 37604] RSCNS::AGStreamUSB::onCallbackThread end
+[2026-09-27 10:39:38.358] [info] [thread id: 33992] bufLen is 0, recv thread exit false,false
+[2026-09-27 10:39:38.359] [info] [thread id: 33992] recvFrame Thread exit
+[2026-09-27 10:39:38.372] [info] [thread id: 33324] StreamUSB stop end 0x19954fe43b0
+[2026-09-27 10:39:38.372] [info] [thread id: 33324] USBCamera::stopAcquisition true
+[2026-09-27 10:39:38.372] [info] [thread id: 33324] flushQueue start
+[2026-09-27 10:39:38.374] [info] [thread id: 33324] unregisterEvent: 1
+[2026-09-27 10:39:38.374] [info] [thread id: 33324] unregisterEvent 1
+[2026-09-27 10:39:38.374] [info] [thread id: 33324] USBCamera::stopAcquisition start
+[2026-09-27 10:39:38.374] [info] [thread id: 33324] StreamUSB stop 0x19954fe43b0
+[2026-09-27 10:39:38.374] [info] [thread id: 33324] StreamUSB stop end 0x19954fe43b0
+[2026-09-27 10:39:38.374] [info] [thread id: 33324] USBCamera::stopAcquisition true
+[2026-09-27 10:39:38.375] [info] [thread id: 33324] flushQueue start
+[2026-09-27 10:39:38.378] [info] [thread id: 33324] USBCamera::close start, deviceid:40010441014
+[2026-09-27 10:39:38.378] [info] [thread id: 33324] StreamUSB stop 0x19954fe43b0
+[2026-09-27 10:39:38.379] [info] [thread id: 33324] StreamUSB stop end 0x19954fe43b0
+[2026-09-27 10:39:38.379] [info] [thread id: 33324] SCCmdUSB::stopThread start
+[2026-09-27 10:39:38.725] [info] [thread id: 33324] SCCmdUSB::stopThread end
+[2026-09-27 10:39:38.725] [info] [thread id: 33324] RSCNS::AGControlUSB::stop finish 0x19954fe3b20
+[2026-09-27 10:39:38.725] [info] [thread id: 33324] USBCamera::threadExit start, deviceid:40010441014
+[2026-09-27 10:39:39.233] [info] [thread id: 39704] {} exit
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] USBCamera::threadExit end, deviceid:40010441014
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] USBCamera::close finish, deviceid:40010441014
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] USBCamera::stopAcquisition start
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] StreamUSB stop 0x19954fe43b0
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] StreamUSB stop end 0x19954fe43b0
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] USBCamera::stopAcquisition true
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] USBCamera::stopAcquisition start
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] StreamUSB stop 0x19954fe43b0
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] StreamUSB stop end 0x19954fe43b0
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] USBCamera::stopAcquisition true
+[2026-09-27 10:39:39.234] [info] [thread id: 33324] flushQueue start

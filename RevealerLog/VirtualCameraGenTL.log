@@ -1,0 +1,7 @@
+[2026-09-27 10:39:14.164] [info] [thread id: 24632] init log fileSize: 10485760, fileNum: 5, filePath: RevealerLog/VirtualCameraGenTL.log, level: 2
+[2026-09-27 10:39:14.164] [info] [thread id: 24632] init GenTL System C:\Users\JKHKOJKLJ\Documents\GitHub\acquisition-program:
+[2026-09-27 10:39:14.165] [info] [thread id: 24632] TLOpenInterface start 0x0
+[2026-09-27 10:39:14.165] [info] [thread id: 24632] TLOpenInterface finish
+[2026-09-27 10:39:14.166] [warning] [thread id: 24632] getPortURL not implemented yet
+[2026-09-27 10:39:14.166] [warning] [thread id: 24632] getPortURL not implemented yet
+[2026-09-27 10:39:14.167] [warning] [thread id: 24632] get device info not implemented:6
