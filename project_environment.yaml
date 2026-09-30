@@ -16,6 +16,7 @@ dependencies:
     - PyQt6
     # - opencv-python
     - pylablib
+    - pco==2.6.0
     - newportxps
     - ids-peak
     - ids-peak-ipl

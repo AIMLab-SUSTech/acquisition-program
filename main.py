@@ -84,7 +84,7 @@ class DeviceLoader(QThread):
                         device_instance = IDS()
                         device_instance.set_pixel_rate(7e7)
                     case "PCO":
-                        from camera import PCOCamera
+                        from hardware.PCO.pco_camera import PCOCamera
                         device_instance = PCOCamera()   
                     case "Thorlabs":
                         module = _load_driver_module(

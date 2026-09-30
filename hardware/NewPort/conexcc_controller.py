@@ -31,8 +31,8 @@ class ConexCCController(MotionController):
 
     def __init__(
         self,
-        port_x: str = "COM4",
-        port_y: str = "COM5",
+        port_x: str = "COM3",
+        port_y: str = "COM4",
         dll_dir: Optional[str] = None,
         init_pos=(-13.0, -13.0),
         controller_address: int = 1,
