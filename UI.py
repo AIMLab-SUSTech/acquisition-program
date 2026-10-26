@@ -194,12 +194,27 @@ class ModernUI(QMainWindow):
         l_dev.addWidget(self.btn_open_cam, 0, 2)
         
         l_dev.addWidget(QLabel("位移台:"), 1, 0)
-        self.combo_stage = self.mk_combo(["NewPort", "Ami", "Ami(双控制器)"])
+        self.combo_stage = self.mk_combo(["NewPort", "newports", "Ami", "Ami(双控制器)"])
         l_dev.addWidget(self.combo_stage, 1, 1)
         
         # [修复] 显式赋值给 self
         self.btn_connect_stage = QPushButton("连接")
         l_dev.addWidget(self.btn_connect_stage, 1, 2)
+
+        self.serial_stage_initialization = QWidget()
+        serial_layout = QFormLayout(self.serial_stage_initialization)
+        serial_layout.setContentsMargins(0, 0, 0, 0)
+        self.btn_initialize_stage = QPushButton("初始化（寻零/使能）")
+        self.btn_initialize_stage.setToolTip("未寻零的轴会运动到参考点；已就绪的轴保持当前位置。")
+        self.btn_initialize_stage.setEnabled(False)
+        serial_layout.addRow(self.btn_initialize_stage)
+        self.lbl_stage_status = QLabel("未连接")
+        serial_layout.addRow("状态:", self.lbl_stage_status)
+        l_dev.addWidget(self.serial_stage_initialization, 2, 0, 1, 3)
+        self.serial_stage_initialization.setVisible(False)
+        self.combo_stage.currentTextChanged.connect(
+            lambda name: self.serial_stage_initialization.setVisible(name == "newports")
+        )
         g_dev.setLayout(l_dev); layout.addWidget(g_dev)
 
         # 2. 位移台

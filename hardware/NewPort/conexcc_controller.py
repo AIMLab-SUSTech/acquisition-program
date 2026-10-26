@@ -28,6 +28,8 @@ class ConexCCController(MotionController):
     """
 
     READY_STATES = {"32", "33", "34", "36", "37", "38"}
+    NOT_REFERENCED_STATES = {"0A", "0B", "0C", "0D", "0E", "0F"}
+    DISABLED_STATES = {"3C", "3D", "3E", "3F"}
 
     def __init__(
         self,
@@ -46,6 +48,7 @@ class ConexCCController(MotionController):
         self.xstage = None
         self.ystage = None
         self.is_open = False
+        self.is_initialized = False
 
         self.ConexCC = self._load_driver(dll_dir)
 
@@ -133,6 +136,8 @@ class ConexCCController(MotionController):
         )
 
     def _stage(self, axis: int):
+        if not self.is_open:
+            raise RuntimeError("CONEX-CC is not connected")
         if axis == 0:
             return self.xstage
         if axis == 1:
@@ -201,7 +206,63 @@ class ConexCCController(MotionController):
         self.xstage = None
         self.ystage = None
         self.is_open = False
+        self.is_initialized = False
         print("CONEX-CC disconnected")
+
+    def initialize(self, timeout: float = 60.0, progress=None):
+        """Prepare both axes; home only axes that are not referenced.
+
+        This can physically move the stage. READY axes keep their position;
+        DISABLE axes are enabled with MM1. No controller reset is performed.
+        timeout is the maximum wait per axis, in seconds.
+        """
+        self.is_initialized = False
+        if not self.is_open:
+            raise RuntimeError("CONEX-CC is not connected")
+
+        for axis, name in ((0, "X"), (1, "Y")):
+            error_code, state = self.get_status(axis)
+            label = f"{name} 轴 ({self._port(axis)})"
+            if error_code not in ("0000", "0", ""):
+                raise RuntimeError(f"{label}: error={error_code}, state={state}")
+            if progress:
+                progress(f"{label}: 状态 {state}")
+
+            try:
+                if state in self.READY_STATES:
+                    pass
+                elif state in self.NOT_REFERENCED_STATES:
+                    if progress:
+                        progress(f"{label}: 正在寻零...")
+                    self.home(axis, timeout=timeout)
+                elif state in self.DISABLED_STATES:
+                    if progress:
+                        progress(f"{label}: 正在使能...")
+                    ret, err = self._stage(axis).MM_Set(self.controller_address, 1)
+                    if ret != 0:
+                        raise RuntimeError(f"{label}: MM_Set failed: {err}")
+                    self.wait_until_ready(axis, timeout=timeout)
+                elif state in {"1E", "28"}:
+                    if progress:
+                        progress(f"{label}: 等待当前运动完成...")
+                    self.wait_until_ready(axis, timeout=timeout)
+                else:
+                    raise RuntimeError(
+                        f"{label}: 无法初始化，控制器状态 {state}，"
+                        "请检查 Newport 软件中的参数和控制模式"
+                    )
+            except TimeoutError:
+                # A failed HOME search must not keep moving after UI reports failure.
+                try:
+                    self.stop(axis)
+                except Exception:
+                    pass
+                raise
+
+            if progress:
+                progress(f"{label}: 已就绪")
+
+        self.is_initialized = True
 
     def get_revision(self, axis: int) -> str:
         stage = self._stage(axis)
@@ -251,6 +312,7 @@ class ConexCCController(MotionController):
 
     def home(self, axis: int, wait: bool = True, timeout: float = 60.0):
         """Execute HOME search."""
+        self.is_initialized = False
         stage = self._stage(axis)
         ret, err = stage.OR(self.controller_address)
         if ret != 0:
@@ -261,6 +323,7 @@ class ConexCCController(MotionController):
 
     def reset(self, axis: int):
         """Reset controller. Note: reset normally makes the axis not referenced."""
+        self.is_initialized = False
         stage = self._stage(axis)
         ret, err = stage.RS(self.controller_address)
         if ret != 0:

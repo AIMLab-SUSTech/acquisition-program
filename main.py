@@ -28,6 +28,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _save_raw_tif(path, image_data, bit_depth):
+    """按采集位深选择最小存储类型，保留像素原值，不移位、不缩放。"""
+    dtype = np.uint8 if bit_depth <= 8 else np.uint16
+    Image.fromarray(np.asarray(image_data, dtype=dtype)).save(path)
+
+
 def _register_dll_directory(directory):
     """把原生 DLL 及其依赖所在目录加入 Windows 搜索路径。"""
     directory = Path(directory).resolve()
@@ -113,7 +119,7 @@ class DeviceLoader(QThread):
                         )
                         sc_index = module.find_camera_index()
                         if sc_index < 0:
-                            raise RuntimeError("SC 相机连接失败：未发现可用相机（已跳过虚拟相机）")
+                            raise RuntimeError("SC 相机连接失败：未发现可用相机")
                         device_instance = module.SCSDKCamera(sc_index)
                     case "Galaxy":
                         module = _load_driver_module("Galaxy", "GalaxyCamera")
@@ -127,8 +133,10 @@ class DeviceLoader(QThread):
                         device_instance.init_groups(['Group1', 'Group2'])
                     case "newports":
                         module = _load_driver_module("NewPort", "conexcc_controller")
-                        # todo port 
-                        device_instance = module.ConexCCController()
+                        # 串口配置在此修改，与 NewPort 的 IP 配置方式一致。
+                        device_instance = module.ConexCCController(
+                            port_x="COM3", port_y="COM4"
+                        )
                     case "Ami":
                         module = _load_driver_module("Ami", "Ami")
                         device_instance = module.PvcsvrController(
@@ -158,6 +166,24 @@ class DeviceLoader(QThread):
 
         except Exception as e:
             self.finished_signal.emit(False, str(e))
+
+
+class StageInitializer(QThread):
+    """Run HOME/enable and status polling without blocking the window."""
+
+    progress_signal = pyqtSignal(str)
+    result_signal = pyqtSignal(bool, str)
+
+    def __init__(self, motion):
+        super().__init__()
+        self.motion = motion
+
+    def run(self):
+        try:
+            self.motion.initialize(progress=self.progress_signal.emit)
+            self.result_signal.emit(True, "双轴初始化完成")
+        except Exception as exc:
+            self.result_signal.emit(False, str(exc))
 
 
 class LivePreviewWorker(QThread):
@@ -542,8 +568,7 @@ class InteractiveImageView(QGraphicsView):
             display_data = image_data
         else:
             display_data = np.asarray(image_data, dtype=np.uint16)
-        if bit_depth <= 12:
-            display_data = np.left_shift(display_data, 16 - bit_depth)
+        # 仅转换为 16 位容器，不移位、不缩放，保留原始像素数值。
         display_data = np.ascontiguousarray(display_data)
 
         h, w = display_data.shape
@@ -635,6 +660,10 @@ class LogicWindow(ModernUI):
         # --- 2. 内部变量 ---
         self.camera = None
         self.motion = None
+        self.motion_initializing = False
+        self.stage_init_thread = None
+        self.zero_stage_x = None
+        self.zero_stage_y = None
         self.is_init = False
         self.pos_ref = True
         
@@ -670,6 +699,8 @@ class LogicWindow(ModernUI):
         # --- 3. 信号绑定 ---
         self.btn_open_cam.clicked.connect(self.start_init_camera)
         self.btn_connect_stage.clicked.connect(self.start_init_motion)
+        self.btn_initialize_stage.clicked.connect(self.start_stage_initialization)
+        self.stage_widget.setEnabled(False)
         
         self.btn_live.clicked.connect(self.toggle_live)
         self.btn_cap.clicked.connect(self.start_scan)
@@ -801,25 +832,81 @@ class LogicWindow(ModernUI):
             self.log_error(f"相机初始化失败: {result}")
 
     def start_init_motion(self):
+        if self.motion is not None:
+            return
         stage_name = self.combo_stage.currentText()
         self.log_info(f"正在连接位移台: {stage_name}...")
         self.btn_connect_stage.setEnabled(False)
+        self.combo_stage.setEnabled(False)
+        self.lbl_stage_status.setText("连接中...")
         self.loader_thread_stage = DeviceLoader('stage', stage_name)
         self.loader_thread_stage.finished_signal.connect(self.on_motion_loaded)
         self.loader_thread_stage.start()
 
     def on_motion_loaded(self, success, result):
-        self.btn_connect_stage.setEnabled(True)
+        self.btn_connect_stage.setEnabled(not success)
         if success:
             self.motion = result
             self.btn_connect_stage.setText("已连接")
             self.log_success("位移台连接成功")
-            
-            self.sync_hardware_position()
-            self.zero_stage_x = float(self.stage_widget.target_x.text())
-            self.zero_stage_y = float(self.stage_widget.target_y.text())
+            if not getattr(self.motion, 'is_initialized', True):
+                self.lbl_stage_status.setText("已连接，待初始化")
+                self.btn_initialize_stage.setEnabled(True)
+                self.log_info("请点击初始化；未寻零的轴将执行参考点搜索")
+                return
+            self.stage_widget.setEnabled(True)
+            if self.sync_hardware_position():
+                self.zero_stage_x = float(self.stage_widget.target_x.text())
+                self.zero_stage_y = float(self.stage_widget.target_y.text())
         else:
+            self.combo_stage.setEnabled(True)
+            self.lbl_stage_status.setText("连接失败")
             self.log_error(f"位移台错误: {result}")
+
+    def start_stage_initialization(self):
+        if (self.motion is None or self.motion_initializing or self.scan_in_progress
+                or (self.stage_init_thread and self.stage_init_thread.isRunning())):
+            return
+        if not hasattr(self.motion, 'initialize'):
+            return
+        self.motion_initializing = True
+        self.zero_stage_x = None
+        self.zero_stage_y = None
+        self.stage_widget.setEnabled(False)
+        self.btn_initialize_stage.setEnabled(False)
+        self.lbl_stage_status.setText("初始化中...")
+        self.log_info("开始初始化位移台，未寻零的轴将运动到参考点...")
+        self.stage_init_thread = StageInitializer(self.motion)
+        self.stage_init_thread.progress_signal.connect(self.log_info)
+        self.stage_init_thread.result_signal.connect(self.on_stage_initialized)
+        self.stage_init_thread.start()
+
+    def on_stage_initialized(self, success, message):
+        self.motion_initializing = False
+        self.btn_initialize_stage.setEnabled(True)
+        self.stage_widget.setEnabled(success)
+        if success:
+            self.lbl_stage_status.setText("已就绪")
+            # “归零”返回初始化后的坐标，与控制器的参考点搜索区分。
+            if self.sync_hardware_position():
+                self.zero_stage_x = float(self.stage_widget.target_x.text())
+                self.zero_stage_y = float(self.stage_widget.target_y.text())
+            self.log_success(message)
+        else:
+            self.lbl_stage_status.setText("初始化失败，可重试")
+            self.log_error(f"位移台初始化失败: {message}")
+
+    def _stage_can_move(self):
+        if self.motion is None:
+            self.log_warning("位移台未连接")
+            return False
+        if self.motion_initializing or not getattr(self.motion, 'is_initialized', True):
+            self.log_warning("请先完成位移台初始化")
+            return False
+        if self.scan_in_progress:
+            self.log_warning("扫描期间无法手动移动位移台")
+            return False
+        return True
 
     def sync_hardware_position(self):
         """标准逻辑：读取硬件当前的绝对位置更新到软件"""
@@ -862,11 +949,13 @@ class LogicWindow(ModernUI):
                 self.stage_widget.target_y.blockSignals(False)
             else:
                 self.log_warning("无法同步硬件位置")
+            return success
 
         except Exception as e:
             self.stage_widget.target_x.blockSignals(False)
             self.stage_widget.target_y.blockSignals(False)
             self.log_error(f"同步位置异常: {e}")
+            return False
 
     # --- 图像处理核心逻辑 ---
     def crop_image(self, full_image):
@@ -970,7 +1059,7 @@ class LogicWindow(ModernUI):
                         self._log_lut_bit_depth = self.bit_depth
                     lut_index = np.clip(cropped_img, 0, len(self._log_lut) - 1)
                     img_disp = self._log_lut[lut_index]
-                    self.image_view.update_image(img_disp, show_mask, bit_depth=16)
+                    self.image_view.update_image(img_disp, show_mask, bit_depth=self.bit_depth)
                 else:
                     # 正常线性显示
                     self.image_view.update_image(cropped_img, show_mask, bit_depth=self.bit_depth)
@@ -1057,6 +1146,7 @@ class LogicWindow(ModernUI):
         if self.live_worker is not None and not self._stop_live_preview(wait_ms=3000):
             return False
         self.scan_in_progress = True
+        self.btn_initialize_stage.setEnabled(False)
         self.btn_live.setEnabled(False)
         self.btn_live.setText("扫描预览中...")
         self.btn_live.setStyleSheet(
@@ -1069,6 +1159,7 @@ class LogicWindow(ModernUI):
         should_resume = self._resume_live_after_scan
         self._resume_live_after_scan = False
         self.scan_in_progress = False
+        self.btn_initialize_stage.setEnabled(hasattr(self.motion, 'initialize'))
         self.btn_live.setEnabled(True)
 
         if (
@@ -1110,8 +1201,7 @@ class LogicWindow(ModernUI):
         self.stage_widget.lbl_y.setText(f"Y: {self.stage_widget.target_y.text()} mm")
 
     def move_stage_manual(self, axis_name, direction):
-        if not self.motion:
-            self.log_warning("位移台未连接")
+        if not self._stage_can_move():
             return
         stage_step = self.stage_widget.step_spin.value()
         is_swap = self.stage_widget.check_swap.isChecked()
@@ -1135,7 +1225,7 @@ class LogicWindow(ModernUI):
             self.log_error(f"移动失败: {e}")
 
     def move_stage_absolute(self):
-        if not self.motion: return
+        if not self._stage_can_move(): return
         try:
             target_x = float(self.stage_widget.target_x.text())
             target_y = float(self.stage_widget.target_y.text())
@@ -1213,8 +1303,10 @@ class LogicWindow(ModernUI):
                 self.log_error(f"相对移动失败: {e}")
 
     def zero_stage(self):
-        if not self.motion:
-            self.log_warning("位移台未连接")
+        if not self._stage_can_move():
+            return
+        if self.zero_stage_x is None or self.zero_stage_y is None:
+            self.log_warning("尚未读取到回零位置，请重新初始化位移台")
             return
 
         try:
@@ -1370,6 +1462,8 @@ class LogicWindow(ModernUI):
         return True
 
     def start_scan(self):
+        if not self._stage_can_move():
+            return
         # 1. 检查目录
         if not self.confirm_directory():
             return
@@ -1436,10 +1530,7 @@ class LogicWindow(ModernUI):
                 os.makedirs(raw_data_dir)
             path_dark = os.path.join(raw_data_dir, "dark.tif")
             try:
-                if img_dark.dtype == np.uint16 or img_dark.dtype == np.uint8:
-                    Image.fromarray(img_dark).save(path_dark)
-                else:
-                    Image.fromarray(img_dark.astype(np.uint16)).save(path_dark)
+                _save_raw_tif(path_dark, self.dark_frame, self.bit_depth)
             except Exception as e:
                 self.log_error(f"暗场保存失败: {e}")
         elif dark_result != QMessageBox.StandardButton.No or self.dark_frame is None:
@@ -1547,12 +1638,7 @@ class LogicWindow(ModernUI):
             os.makedirs(raw_data_dir)
         path = os.path.join(raw_data_dir, frame_name)
         try:
-            # 直接保存 raw
-            if img_data.dtype != np.uint8 and img_data.dtype != np.uint16:
-                save_data = img_data.astype(np.uint16)
-            else:
-                save_data = img_data
-            Image.fromarray(save_data).save(path)
+            _save_raw_tif(path, img_data, self.bit_depth)
         except Exception as e:
             print(f"单帧保存失败: {e}")
         
@@ -1586,6 +1672,7 @@ class LogicWindow(ModernUI):
             return
 
         # --- 将 Data 写入 H5 ---
+        # H5 统一使用 uint16 容器；8/12 位像素原值不移位、不缩放。
         frame = np.array(img_data, dtype=np.uint16)   # (H, W)
         if self.pos_ref == True:
             x_val = np.array([cur_x], dtype=np.float64)   # (1,)
@@ -1729,10 +1816,7 @@ class LogicWindow(ModernUI):
                     raw_data_dir = os.path.join(self.save_dir, "raw_data")
                     os.makedirs(raw_data_dir, exist_ok=True)
                     save_path = os.path.join(raw_data_dir, f"scandata_dark.tif")
-                    if self.cmi_dark.dtype == np.uint16 or self.cmi_dark.dtype == np.uint8:
-                        Image.fromarray(self.cmi_dark).save(save_path)
-                    else:
-                        Image.fromarray(self.cmi_dark.astype(np.uint16)).save(save_path)
+                    _save_raw_tif(save_path, self.cmi_dark, self.bit_depth)
                 except Exception as e:
                     self.log_error(f"暗场保存失败: {e}")
 
@@ -1833,7 +1917,7 @@ class LogicWindow(ModernUI):
             path_tif = os.path.join(raw_data_dir, f"{base_name}.tif")
 
             try:
-                Image.fromarray(roi_img).save(path_tif)
+                _save_raw_tif(path_tif, roi_img, self.bit_depth)
                 self.log_info(f"图片已保存: {base_name}.tif")
             except Exception as e:
                 self.log_warning(f"TIF保存失败: {e}")   
@@ -1848,6 +1932,11 @@ class LogicWindow(ModernUI):
 
     def closeEvent(self, event):
         """退出前安全停止取帧/扫描线程，避免 QThread 运行中被销毁。"""
+        for thread in (getattr(self, 'loader_thread_stage', None), self.stage_init_thread):
+            if thread is not None and thread.isRunning():
+                event.ignore()
+                QTimer.singleShot(300, self.close)
+                return
         self.timer.stop()
         self._exposure_timer.stop()
 
@@ -1875,6 +1964,14 @@ class LogicWindow(ModernUI):
                 self.log_warning(f"关闭相机时出现异常: {e}")
             finally:
                 self.camera = None
+
+        if self.motion is not None and hasattr(self.motion, 'close'):
+            try:
+                self.motion.close()
+            except Exception as e:
+                self.log_warning(f"关闭位移台时出现异常: {e}")
+            finally:
+                self.motion = None
 
         super().closeEvent(event)
 

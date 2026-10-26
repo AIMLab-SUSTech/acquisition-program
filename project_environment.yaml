@@ -4,28 +4,30 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
+  - pip
   - numpy
   - h5py
   - matplotlib
   - pillow
   - scipy
-  # - pip
-  # - pyusb
-  # - pyserial
   - pip:
     - PyQt6
-    # - opencv-python
     - pylablib
     - pco==2.6.0
     - newportxps
+    - pythonnet>=3,<4
     - ids-peak
     - ids-peak-ipl
+    # 可选驱动/独立示例依赖，按实际使用的设备启用：
+    # - pyvcam             # hardware/Photometrics
+    # - pypylon            # camera.py 中的 Basler
+    # - opencv-python      # hardware/QHY 独立示例
     # - imagingcontrol4
-    # - pyvcam
-    # - pythonnet
-    # Local dependencies or manual installs might be needed for:
-    # - arena_api (Lucid cameras) - check dll/Galaxy/lucid/ for whl or install from vendor
-    # - Galaxy camera uses local dll/Galaxy/gxipy (included in project source)
+    # arena_api (Lucid)：按厂商 Arena SDK 说明安装。
+    # Galaxy 的 gxipy 已包含在 hardware/Galaxy/gxipy，仍需安装厂商 SDK。
+    # 各厂商原生 SDK、相机驱动和 Newport CONEX-CC 软件需单独安装。
 
-# 在power shell 中激活环境
-# conda env create -f project_environment.yaml --force
+# 新建环境：conda env create -f project_environment.yaml
+# 更新已有环境：conda env update -n acquisition_env -f project_environment.yaml
+# 激活环境：conda activate acquisition_env
+# 启动程序：python main.py
