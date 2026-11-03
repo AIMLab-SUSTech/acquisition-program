@@ -12,7 +12,7 @@ import h5py
 import shutil
 
 # PyQt6 导入
-from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
+from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QGraphicsItem, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
 from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread, QElapsedTimer
 
@@ -558,6 +558,7 @@ class InteractiveImageView(QGraphicsView):
         self.v_line = None
         self.h_line = None
         self.circle = None
+        self._circle_image_size = None
 
     def update_image(self, image_data, show_mask=False, bit_depth=16):
         # ===========================
@@ -600,11 +601,17 @@ class InteractiveImageView(QGraphicsView):
                 self.circle = self.scene.addEllipse(
                     0, 0, 0, 0, QPen(QColor("green"), 2, Qt.PenStyle.SolidLine)
                 )
+                self.circle.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self.circle.setCursor(Qt.CursorShape.OpenHandCursor)
+                # self.circle.setToolTip("拖动圆周可移动外圈")
                 for item in (self.v_line, self.h_line, self.circle):
                     item.setZValue(10)
             self.v_line.setLine(cx, 0, cx, h)
             self.h_line.setLine(0, cy, w, cy)
             self.circle.setRect(cx-radius, cy-radius, radius*2, radius*2)
+            if self._circle_image_size != (w, h):
+                self.circle.setPos(0, 0)
+                self._circle_image_size = (w, h)
 
         for item in (self.v_line, self.h_line, self.circle):
             if item is not None:
