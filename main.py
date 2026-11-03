@@ -10,9 +10,10 @@ from PIL import Image
 import traceback
 import h5py
 import shutil
+import math
 
 # PyQt6 导入
-from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QGraphicsItem, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
+from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
 from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread, QElapsedTimer
 
@@ -536,6 +537,24 @@ class ScanWorker(QThread):
 # =========================================================
 #  自定义图像显示控件
 # =========================================================
+class ResizableMaskCircle(QGraphicsEllipseItem):
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        center = self.rect().center()
+        point = event.pos()
+        radius = max(1.0, math.hypot(point.x() - center.x(), point.y() - center.y()))
+        self.setRect(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        event.accept()
+
+
 class InteractiveImageView(QGraphicsView):
     mouse_hover_signal = pyqtSignal(int, int, int)
 
@@ -598,19 +617,16 @@ class InteractiveImageView(QGraphicsView):
                 self.h_line = self.scene.addLine(
                     0, 0, 0, 0, QPen(QColor("blue"), 0, Qt.PenStyle.DashLine)
                 )
-                self.circle = self.scene.addEllipse(
-                    0, 0, 0, 0, QPen(QColor("green"), 2, Qt.PenStyle.SolidLine)
-                )
-                self.circle.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+                self.circle = ResizableMaskCircle()
+                self.circle.setPen(QPen(QColor("green"), 2, Qt.PenStyle.SolidLine))
+                self.scene.addItem(self.circle)
                 self.circle.setCursor(Qt.CursorShape.OpenHandCursor)
-                # self.circle.setToolTip("拖动圆周可移动外圈")
                 for item in (self.v_line, self.h_line, self.circle):
                     item.setZValue(10)
             self.v_line.setLine(cx, 0, cx, h)
             self.h_line.setLine(0, cy, w, cy)
-            self.circle.setRect(cx-radius, cy-radius, radius*2, radius*2)
             if self._circle_image_size != (w, h):
-                self.circle.setPos(0, 0)
+                self.circle.setRect(cx-radius, cy-radius, radius*2, radius*2)
                 self._circle_image_size = (w, h)
 
         for item in (self.v_line, self.h_line, self.circle):
