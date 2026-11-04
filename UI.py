@@ -318,9 +318,13 @@ class ModernUI(QMainWindow):
     def create_big_btns(self):
         w = QWidget(); l = QGridLayout(w); l.setContentsMargins(0, 5, 0, 5)
         # 显式赋值
-        self.btn_live = QPushButton("👁 启动"); self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;min-height:40px;")
-        self.btn_cap = QPushButton("🔴 采集"); self.btn_cap.setStyleSheet("background:#c0392b;color:white;font-weight:bold;min-height:40px;")
-        self.btn_save = QPushButton("💾 保存"); self.btn_save.setStyleSheet("background:#2980b9;color:white;font-weight:bold;min-height:40px;")
+        self.btn_live = QPushButton("👁 预览"); self.btn_live.setStyleSheet("background:#27ae60;color:white;font-weight:bold;min-height:45px;")
+        self.btn_cap = QPushButton("🔴 采集"); self.btn_cap.setStyleSheet("background:#c0392b;color:white;font-weight:bold;min-height:45px;")
+        self.btn_save = QPushButton("💾 保存"); self.btn_save.setStyleSheet("background:#2980b9;color:white;font-weight:bold;min-height:45px;")
+        for column, button in enumerate((self.btn_live, self.btn_cap, self.btn_save)):
+            button.setFixedHeight(45)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            l.setColumnStretch(column, 1)
         l.addWidget(self.btn_live, 0, 0); l.addWidget(self.btn_cap, 0, 1); l.addWidget(self.btn_save, 0, 2)
         
         aux = QHBoxLayout()

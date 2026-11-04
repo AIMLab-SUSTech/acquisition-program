@@ -16,6 +16,7 @@ import math
 from PyQt6.QtWidgets import QApplication, QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QVBoxLayout, QFileDialog, QMessageBox, QInputDialog
 from PyQt6.QtGui import QImage, QPixmap, QPen, QColor
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QThread, QElapsedTimer
+from PyQt6 import sip
 
 # 导入 UI 定义
 from UI import ModernUI
@@ -489,16 +490,11 @@ class ScanWorker(QThread):
                             "暗场尺寸与当前图像不一致: "
                             f"图像={raw_img.shape}, 暗场={self.dark_frame.shape}"
                         )
-                    # 先转换为uint16，然后再转换为int32进行减法，避免溢出
-                    img_uint16 = raw_img.astype(np.uint16)
-                    dark_uint16 = self.dark_frame.astype(np.uint16)
-                    # 转换为int32进行减法，避免uint16溢出
-                    img_int32 = img_uint16.astype(np.int32)
-                    dark_int32 = dark_uint16.astype(np.int32)
-                    subtracted = img_int32 - dark_int32
-                    # 将负值设为0
-                    subtracted[subtracted < 0] = 0
-                    # 转换回uint16
+                    # 在一个 int32 缓冲区中完成减法和截断，避免无符号溢出。
+                    img_uint16 = np.asarray(raw_img, dtype=np.uint16)
+                    dark_uint16 = np.asarray(self.dark_frame, dtype=np.uint16)
+                    subtracted = np.subtract(img_uint16, dark_uint16, dtype=np.int32)
+                    np.maximum(subtracted, 0, out=subtracted)
                     final_data = subtracted.astype(np.uint16)
                 else:
                     # 确保数据类型为uint16
@@ -512,9 +508,9 @@ class ScanWorker(QThread):
                 logical_x, logical_y = self._physical_to_logical_position(
                     cur_x, cur_y
                 )
-                self.update_signal.emit(
-                    final_data.copy(), logical_x, logical_y, i
-                )
+                # 暗场处理和类型转换已经产生独立数组；原始相机缓冲区则须复制。
+                preview_data = final_data if final_data is not raw_img else final_data.copy()
+                self.update_signal.emit(preview_data, logical_x, logical_y, i)
 
             success = True
             result_message = f"采集完成，共 {total} 点"
@@ -564,6 +560,7 @@ class InteractiveImageView(QGraphicsView):
         self.setScene(self.scene)
         self.pixmap_item = None
         self.np_img = None 
+        self._display_data = None
         self.setMouseTracking(True) 
         self.setStyleSheet("background: #000; border: 0px;")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -588,11 +585,13 @@ class InteractiveImageView(QGraphicsView):
             display_data = image_data
         else:
             display_data = np.asarray(image_data, dtype=np.uint16)
-        # 仅转换为 16 位容器，不移位、不缩放，保留原始像素数值。
-        display_data = np.ascontiguousarray(display_data)
+        # 裁剪通常只改变行步长，可直接使用原数组，避免逐帧复制。
+        if display_data.strides[1] != 2 or display_data.strides[0] < display_data.shape[1] * 2:
+            display_data = np.ascontiguousarray(display_data)
 
         h, w = display_data.shape
-        qimg = QImage(display_data.data, w, h ,QImage.Format.Format_Grayscale16)
+        qimg = QImage(sip.voidptr(display_data.ctypes.data), w, h,
+                      display_data.strides[0], QImage.Format.Format_Grayscale16)
         pix = QPixmap.fromImage(qimg)
         size_changed = self._image_size != (w, h)
         self._image_size = (w, h)
@@ -603,6 +602,8 @@ class InteractiveImageView(QGraphicsView):
             self.pixmap_item.setZValue(0) # 图片永远在最底层
         else:
             self.pixmap_item.setPixmap(pix)
+        # QImage 使用外部缓冲区，保留其所有者直到下一帧替换。
+        self._display_data = display_data
 
         # ===========================
         # Mask 绘制
@@ -623,14 +624,14 @@ class InteractiveImageView(QGraphicsView):
                 self.circle.setCursor(Qt.CursorShape.OpenHandCursor)
                 for item in (self.v_line, self.h_line, self.circle):
                     item.setZValue(10)
-            self.v_line.setLine(cx, 0, cx, h)
-            self.h_line.setLine(0, cy, w, cy)
             if self._circle_image_size != (w, h):
+                self.v_line.setLine(cx, 0, cx, h)
+                self.h_line.setLine(0, cy, w, cy)
                 self.circle.setRect(cx-radius, cy-radius, radius*2, radius*2)
                 self._circle_image_size = (w, h)
 
         for item in (self.v_line, self.h_line, self.circle):
-            if item is not None:
+            if item is not None and item.isVisible() != show_mask:
                 item.setVisible(show_mask)
 
         if size_changed:
@@ -1050,16 +1051,7 @@ class LogicWindow(ModernUI):
                 update_stats = self._stats_timer.elapsed() >= 100
                 if update_stats:
                     self._stats_timer.restart()
-                    max_val = np.max(cropped_img)
-                    self.line_global_max.setText(f"{max_val}")
-                    limit = getattr(self, 'saturation_value', 2**self.bit_depth - 1)
-                    is_saturated = max_val >= limit
-                    if is_saturated != self._is_saturated:
-                        self._is_saturated = is_saturated
-                        if is_saturated:
-                            self.line_global_max.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
-                        else:
-                            self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
+                    self._update_max_photon_count(cropped_img)
 
                 # count = np.sum(np.array(cropped_img) >= limit)
                 # self.line_saturation.setText(f"{count}")
@@ -1080,7 +1072,10 @@ class LogicWindow(ModernUI):
                             np.sqrt(max_input) * np.sqrt(values)
                         ).clip(0, 65535).astype(np.uint16)
                         self._log_lut_bit_depth = self.bit_depth
-                    lut_index = np.clip(cropped_img, 0, len(self._log_lut) - 1)
+                    if cropped_img.dtype == np.uint16 and len(self._log_lut) == 65536:
+                        lut_index = cropped_img
+                    else:
+                        lut_index = np.clip(cropped_img, 0, len(self._log_lut) - 1)
                     img_disp = self._log_lut[lut_index]
                     self.image_view.update_image(img_disp, show_mask, bit_depth=self.bit_depth)
                 else:
@@ -1135,7 +1130,7 @@ class LogicWindow(ModernUI):
         self.is_live = True
         self.btn_live.setText("⬛ 停止")
         self.btn_live.setStyleSheet(
-            "background:#7f8c8d;color:white;font-weight:bold;min-height:40px;"
+            "background:#7f8c8d;color:white;font-weight:bold;min-height:45px;"
         )
         return True
 
@@ -1152,7 +1147,7 @@ class LogicWindow(ModernUI):
             self.live_worker = None
         self.btn_live.setText("👁 启动")
         self.btn_live.setStyleSheet(
-            "background:#27ae60;color:white;font-weight:bold;min-height:40px;"
+            "background:#27ae60;color:white;font-weight:bold;min-height:45px;"
         )
         return True
 
@@ -1173,7 +1168,7 @@ class LogicWindow(ModernUI):
         self.btn_live.setEnabled(False)
         self.btn_live.setText("扫描预览中...")
         self.btn_live.setStyleSheet(
-            "background:#7f8c8d;color:white;font-weight:bold;min-height:40px;"
+            "background:#7f8c8d;color:white;font-weight:bold;min-height:45px;"
         )
         return True
 
@@ -1206,7 +1201,7 @@ class LogicWindow(ModernUI):
             self.is_live = False
             self.btn_live.setText("👁 启动")
             self.btn_live.setStyleSheet(
-                "background:#27ae60;color:white;font-weight:bold;min-height:40px;"
+                "background:#27ae60;color:white;font-weight:bold;min-height:45px;"
             )
 
     def calculate_center(self): #todo
@@ -1644,11 +1639,24 @@ class LogicWindow(ModernUI):
         else:
             self.log_info(msg)
 
+    def _update_max_photon_count(self, image):
+        max_val = np.max(image)
+        self.line_global_max.setText(f"{max_val}")
+        limit = getattr(self, 'saturation_value', 2**self.bit_depth - 1)
+        is_saturated = max_val >= limit
+        if is_saturated != self._is_saturated:
+            self._is_saturated = is_saturated
+            if is_saturated:
+                self.line_global_max.setStyleSheet("color: red; font-weight: bold; background: #ffeeee;")
+            else:
+                self.line_global_max.setStyleSheet("color: green; font-weight: bold; background: #f0f0f0;")
+
     def _update_scan_preview(self, img_data, cur_x, cur_y, idx):
         """
         处理子线程发来的图像更新信号
         ScanWorker.update_signal -> (img_data, cur_x, cur_y, idx)
         """     
+        self._update_max_photon_count(img_data)
         # 更新界面图像显示
         show_mask = self.chk_mask.isChecked()
         self.image_view.update_image(
@@ -1679,7 +1687,7 @@ class LogicWindow(ModernUI):
         self.pos_ref = True
         self.btn_cap.setEnabled(True)  # 锁定按钮
         self.btn_cap.setText("🔴 采集")
-        self.btn_cap.setStyleSheet("background:#e74c3c;color:white;font-weight:bold;height: 45px;")
+        self.btn_cap.setStyleSheet("background:#e74c3c;color:white;font-weight:bold;min-height:45px;")
         self._restore_live_preview_after_scan()
 
     def _write_scan_to_h5(self, img_data, cur_x, cur_y, h5_path=None):
@@ -1695,8 +1703,7 @@ class LogicWindow(ModernUI):
             return
 
         # --- 将 Data 写入 H5 ---
-        # H5 统一使用 uint16 容器；8/12 位像素原值不移位、不缩放。
-        frame = np.array(img_data, dtype=np.uint16)   # (H, W)
+        frame = np.asarray(img_data, dtype=np.uint16)   # (H, W)
         if self.pos_ref == True:
             x_val = np.array([cur_x], dtype=np.float64)   # (1,)
             self.x_ref = x_val
