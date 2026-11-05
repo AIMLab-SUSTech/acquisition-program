@@ -9,6 +9,9 @@ from camera import Camera  # 请确保项目中有 camera.py 定义 Camera 基�
 
 class HikrobotCamera(Camera):
     """海康机器人 MV-CH120-10UM 相机类（使用官方 MVS SDK）"""
+
+    # GetOneFrameTimeout blocks until a queued or newly arrived frame is available.
+    read_waits_for_new_frame = True
     def __init__(self, camera_index=0):
         super().__init__()
         self.cam = None
@@ -263,7 +266,7 @@ class HikrobotCamera(Camera):
             n_data_size = width * height * bytes_per_pixel
             pData = (c_ubyte * n_data_size)()
             frame_info = self.MV_FRAME_OUT_INFO_EX()
-            ret = self.cam.MV_CC_GetOneFrameTimeout(pData, n_data_size, frame_info, 1000)
+            ret = self.cam.MV_CC_GetOneFrameTimeout(pData, n_data_size, frame_info, 12000)
             if ret != self.MV_OK:
                 print(f"获取图像帧失败，错误码: {ret}")
                 return None

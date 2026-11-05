@@ -20,6 +20,7 @@ from PyQt6 import sip
 
 # 导入 UI 定义
 from UI import ModernUI
+from frame_acquisition import read_scan_image
 
 # 不依赖启动程序时的当前工作目录。
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -450,30 +451,12 @@ class ScanWorker(QThread):
                     target_x, target_y, dx, dy
                 )
 
-                # Galaxy 等连续采集相机可能在位移期间积压旧帧。
-                # 位移稳定后清空队列，下一次读取将阻塞等待新帧。
-                if hasattr(self.camera, 'flush_image_queue'):
-                    try:
-                        if not self.camera.flush_image_queue():
-                            self.log_signal.emit(
-                                f"第 {i} 点清空相机缓冲队列失败",
-                                "warning",
-                            )
-                    except Exception as e:
-                        self.log_signal.emit(
-                            f"第 {i} 点清空相机缓冲队列异常: {e}",
-                            "warning",
-                        )
-
-                # 2. 每个点只采集一次；任一点读取失败即终止整次扫描。
-                if use_software_trigger:
-                    self.camera.trigger()
-
-                # Galaxy 的 get_image 会阻塞等待新帧，无需再额外 sleep。
-                # 其他非阻塞驱动仍按曝光时间等待。
-                if not getattr(self.camera, 'read_waits_for_new_frame', False):
-                    time.sleep(max(0.001, self.exposure_s * 1.1))
-                raw_img = self.camera.read_newest_image()
+                # 到位后同步相机：软件触发生成新帧；连续采集则先
+                # 丢弃可能在到位前开始曝光的帧，再等待后续新帧。
+                try:
+                    raw_img = read_scan_image(self.camera, use_software_trigger)
+                except Exception as exc:
+                    raise RuntimeError(f"第 {i} 点等待新帧失败: {exc}") from exc
                 if raw_img is None:
                     raise RuntimeError(f"第 {i} 点未读取到图像，采集失败")
                 if np.max(raw_img) <= 0:

@@ -189,8 +189,8 @@ class GalaxyCamera:
         if not self.data_stream: return None
         
         try:
-            # 获取图像 (超时 1000ms)
-            raw_image = self.data_stream.get_image(timeout=1000)
+            # 覆盖界面允许的最长 10 秒曝光及传输时间；帧到达即返回。
+            raw_image = self.data_stream.get_image(timeout=12000)
             
             if raw_image is None or raw_image.get_status() != gx.GxFrameStatusList.SUCCESS:
                 return None

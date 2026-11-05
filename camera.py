@@ -28,6 +28,14 @@ class Camera(ABC):
         pass
 
 class IDS(Camera):
+    def read_fresh_image(self):
+        # Count frames from this call, not from the last read (which may have
+        # occurred before stage motion). Skip a possibly ongoing exposure.
+        self.cam.wait_for_frame(since='now', nframes=2, timeout=30.0,
+                                error_on_stopped=True)
+        image = self.cam.read_newest_image()
+        return None if image is None else np.array(image, copy=True)
+
     def __init__(self):
         from pylablib.devices import uc480
 
@@ -96,6 +104,8 @@ class IDS(Camera):
     
 
 class Ham(Camera):
+    read_fresh_image = IDS.read_fresh_image
+
     def __init__(self):
         from pylablib.devices import DCAM
 
