@@ -3,6 +3,30 @@ from abc import ABC, abstractmethod
 import time
 
 
+def read_scan_image(camera, software_trigger=False):
+    """Return a frame acquired after settling, without using cached data."""
+    flush = getattr(camera, 'flush_image_queue', None)
+    if software_trigger:
+        if not flush or not flush():
+            raise RuntimeError("清空相机缓冲队列失败")
+        camera.trigger()
+        return camera.read_newest_image()
+
+    fresh_reader = getattr(camera, 'read_fresh_image', None)
+    if fresh_reader:
+        return fresh_reader()
+    if not flush or not getattr(camera, 'read_waits_for_new_frame', False):
+        raise RuntimeError("当前相机驱动不支持确认新帧，无法安全扫描")
+    if not flush():
+        raise RuntimeError("清空相机缓冲队列失败")
+    # The first exposure may have started while the stage was moving.
+    if camera.read_newest_image() is None:
+        raise RuntimeError("等待相机同步帧失败")
+    if not flush():
+        raise RuntimeError("清空相机缓冲队列失败")
+    return camera.read_newest_image()
+
+
 class Camera(ABC):
     def __init__(self):
         super().__init__()

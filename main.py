@@ -20,7 +20,7 @@ from PyQt6 import sip
 
 # 导入 UI 定义
 from UI import ModernUI
-from frame_acquisition import read_scan_image
+from camera import read_scan_image
 
 # 不依赖启动程序时的当前工作目录。
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -796,6 +796,9 @@ class LogicWindow(ModernUI):
     # --- 异步加载设备 ---
     def start_init_camera(self):
         """步骤1: 仅仅负责启动线程"""
+        if self.camera is not None:
+            self.disconnect_camera()
+            return
         cam_name = self.combo_camera.currentText()
         self.log_info(f"正在初始化相机: {cam_name}...")
         self.btn_open_cam.setEnabled(False) # 禁用按钮防止重复点击
@@ -815,8 +818,9 @@ class LogicWindow(ModernUI):
             # 1. 应用曝光
             self._apply_exposure_time()
             self.camera.start_acquisition()
-            self.btn_open_cam.setText("已就绪")
+            self.btn_open_cam.setText("断开")
             self.btn_open_cam.setStyleSheet("background-color: #4CAF50; color: white;")
+            self.combo_camera.setEnabled(False)
             
             # --- 相机参数初始化逻辑 ---
             # 2. 获取位深
@@ -837,6 +841,28 @@ class LogicWindow(ModernUI):
             
         else:
             self.log_error(f"相机初始化失败: {result}")
+
+    def disconnect_camera(self):
+        if self.scan_in_progress:
+            self.log_warning("扫描采集期间不能断开相机")
+            return
+        if not self._stop_live_preview():
+            return
+        try:
+            with self.camera_lock:
+                if hasattr(self.camera, 'close'):
+                    self.camera.close()
+                elif hasattr(self.camera, 'stop_acquisition'):
+                    self.camera.stop_acquisition()
+        except Exception as e:
+            self.log_error(f"断开相机失败: {e}")
+            return
+        self.camera = None
+        self.cmi_dark = None
+        self.btn_open_cam.setText("打开")
+        self.btn_open_cam.setStyleSheet("")
+        self.combo_camera.setEnabled(True)
+        self.log_info("相机已断开")
 
     def start_init_motion(self):
         if self.motion is not None:
